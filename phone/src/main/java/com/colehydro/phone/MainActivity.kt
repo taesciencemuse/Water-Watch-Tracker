@@ -179,6 +179,29 @@ class MainActivity : ComponentActivity() {
                     FilledTonalButton(
                         onClick = {
                             scope.launch {
+                                status = try {
+                                    val granted = HealthConnectClient.getOrCreate(this@MainActivity)
+                                        .permissionController.getGrantedPermissions()
+                                    if (granted.isEmpty()) "Granted permissions: none"
+                                    else "Granted permissions: ${granted.joinToString()}"
+                                } catch (e: Exception) {
+                                    "Granted permissions check failed: ${e.message}"
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text(
+                            "Show granted permissions",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            scope.launch {
                                 val ml = HealthConnectWriter.todayTotalMl(this@MainActivity)
                                 status = "Health Connect today: ${(ml / 29.5735).toInt()} oz"
                             }
