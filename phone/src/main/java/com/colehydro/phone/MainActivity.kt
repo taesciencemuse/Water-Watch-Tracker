@@ -5,7 +5,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -28,7 +32,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.FabPosition
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -46,6 +59,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -201,35 +216,92 @@ class MainActivity : ComponentActivity() {
                     label = "todayProgress"
                 )
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background)
-                        .verticalScroll(rememberScrollState())
-                        .padding(24.dp)
-                ) {
-                    if (screen == Screen.Main) {
-                        // ---- Main screen ----
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Water",
-                                style = MaterialTheme.typography.displayMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            TextButton(onClick = { screen = Screen.Settings }) {
-                                Text("Settings")
+                val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        ModalDrawerSheet {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(16.dp)
+                            ) {
+                                NavigationDrawerItem(
+                                    label = { Text("Today") },
+                                    selected = screen == Screen.Main,
+                                    onClick = {
+                                        scope.launch {
+                                            drawerState.close()
+                                            screen = Screen.Main
+                                        }
+                                    }
+                                )
+                                Spacer(modifier = Modifier.weight(1f))
+                                NavigationDrawerItem(
+                                    label = { Text("Settings") },
+                                    selected = screen == Screen.Settings,
+                                    onClick = {
+                                        scope.launch {
+                                            drawerState.close()
+                                            screen = Screen.Settings
+                                        }
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "Water (phone) 0.1.0 (v8)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
-                        Text(
-                            "Phone companion",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                ) {
+                    Scaffold(
+                        floatingActionButton = {
+                            // Circular Material 3 floating menu button,
+                            // bottom-left, opening the left drawer.
+                            FloatingActionButton(
+                                onClick = { scope.launch { drawerState.open() } }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Menu,
+                                    contentDescription = "Open menu"
+                                )
+                            }
+                        },
+                        floatingActionButtonPosition = FabPosition.Start
+                    ) { innerPadding ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background)
+                                .verticalScroll(rememberScrollState())
+                                .padding(innerPadding)
+                                .padding(24.dp)
+                        ) {
+                            // Modern fading screen transition, used both
+                            // for drawer navigation and for the back
+                            // gesture (which just changes `screen`).
+                            AnimatedContent(
+                                targetState = screen,
+                                transitionSpec = {
+                                    fadeIn(
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessLow
+                                        )
+                                    ) togetherWith fadeOut(
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessLow
+                                        )
+                                    )
+                                },
+                                label = "screenFade"
+                            ) { targetScreen ->
+                                if (targetScreen == Screen.Main) {
+                        // ---- Main screen ----
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.extraLarge,
@@ -330,38 +402,9 @@ class MainActivity : ComponentActivity() {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        // Prominent Settings entry point (in addition to the
-                        // top-right text button): plain text up top was too
-                        // easy to miss on v4.
-                        Spacer(modifier = Modifier.height(24.dp))
-                        FilledTonalButton(
-                            onClick = { screen = Screen.Settings },
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
-                            shape = MaterialTheme.shapes.extraLarge
-                        ) {
-                            Text(
-                                "Settings",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(88.dp))
                     } else {
                         // ---- Settings screen ----
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Settings",
-                                style = MaterialTheme.typography.displayMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            TextButton(onClick = { screen = Screen.Main }) {
-                                Text("Back")
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(24.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = MaterialTheme.shapes.extraLarge,
@@ -473,10 +516,13 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water (phone) 0.1.0 (v7) • Health Connect client 1.1.0",
+                            "Water (phone) 0.1.0 (v8) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                                }
+                        }
                     }
                 }
             }
