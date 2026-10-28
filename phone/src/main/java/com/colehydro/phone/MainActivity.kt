@@ -207,9 +207,13 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun PressButton(
         onClick: () -> Unit,
-        modifier: Modifier,
+        modifier: Modifier = Modifier,
         tonal: Boolean,
-        shape: androidx.compose.ui.graphics.Shape = MaterialTheme.shapes.extraLarge,
+        topStart: androidx.compose.ui.unit.Dp = 28.dp,
+        topEnd: androidx.compose.ui.unit.Dp = 28.dp,
+        bottomEnd: androidx.compose.ui.unit.Dp = 28.dp,
+        bottomStart: androidx.compose.ui.unit.Dp = 28.dp,
+        colors: androidx.compose.material3.ButtonColors? = null,
         content: @Composable RowScope.() -> Unit
     ) {
         val interaction = androidx.compose.runtime.remember { MutableInteractionSource() }
@@ -222,13 +226,38 @@ class MainActivity : ComponentActivity() {
             ),
             label = "pressScale"
         )
+        // Shape morph (M3 shape-morph, m3.material.io/styles/shape/shape-morph):
+        // every button grows more square as it is pressed. Corner radii
+        // morph from their rest values to 25% of rest (28dp -> 7dp for a
+        // pill, 0dp stays 0dp for a connected-group edge), driven by the
+        // real press state with the expressive spring (damping 0.4,
+        // medium stiffness). No graphics-shapes / alpha needed: this is
+        // a RoundedCornerShape whose radii are animated, so it always
+        // stays a rectangular button, and the connected +12/+16 group
+        // keeps its joined shape at rest.
+        val morphProgress by animateFloatAsState(
+            targetValue = if (pressed) 1f else 0f,
+            animationSpec = spring(
+                dampingRatio = 0.4f,
+                stiffness = Spring.StiffnessMedium
+            ),
+            label = "morphProgress"
+        )
+        val morphFactor = 1f - 0.75f * morphProgress
+        val morphedShape = RoundedCornerShape(
+            topStart = topStart * morphFactor,
+            topEnd = topEnd * morphFactor,
+            bottomEnd = bottomEnd * morphFactor,
+            bottomStart = bottomStart * morphFactor
+        )
         val scaled = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
         if (tonal) {
             FilledTonalButton(
                 onClick = onClick,
                 modifier = scaled,
                 interactionSource = interaction,
-                shape = shape,
+                shape = morphedShape,
+                colors = colors ?: ButtonDefaults.filledTonalButtonColors(),
                 content = content
             )
         } else {
@@ -236,12 +265,46 @@ class MainActivity : ComponentActivity() {
                 onClick = onClick,
                 modifier = scaled,
                 interactionSource = interaction,
-                shape = shape,
-                colors = ButtonDefaults.buttonColors(
+                shape = morphedShape,
+                colors = colors ?: ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary
                 ),
                 content = content
+            )
+        }
+    }
+
+    @Composable
+    private fun MorphFab(onClick: () -> Unit) {
+        // Same morphy squishy press as PressButton, for the circular
+        // drawer FAB: circle at rest (28dp corners on a 56dp FAB),
+        // squarer on press (28dp -> 7dp), plus the 0.93 scale.
+        val interaction = androidx.compose.runtime.remember { MutableInteractionSource() }
+        val pressed by interaction.collectIsPressedAsState()
+        val scale by animateFloatAsState(
+            targetValue = if (pressed) 0.93f else 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow
+            ),
+            label = "fabPressScale"
+        )
+        val morphProgress by animateFloatAsState(
+            targetValue = if (pressed) 1f else 0f,
+            animationSpec = spring(dampingRatio = 0.4f, stiffness = Spring.StiffnessMedium),
+            label = "fabMorphProgress"
+        )
+        val corner = 28.dp * (1f - 0.75f * morphProgress)
+        FloatingActionButton(
+            onClick = onClick,
+            modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale },
+            interactionSource = interaction,
+            shape = RoundedCornerShape(corner)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Menu,
+                contentDescription = "Open menu"
             )
         }
     }
@@ -592,10 +655,10 @@ class MainActivity : ComponentActivity() {
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(30, 60, 120).forEach { mins ->
-                            FilledTonalButton(
+                            PressButton(
                                 onClick = { interval = mins },
                                 modifier = Modifier.weight(1f),
-                                shape = MaterialTheme.shapes.extraLarge,
+                                tonal = true,
                                 colors = if (interval == mins) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) else ButtonDefaults.filledTonalButtonColors()
                             ) { Text("${mins}m") }
                         }
@@ -604,17 +667,17 @@ class MainActivity : ComponentActivity() {
                     Text("Window: $startHour:00 – $endHour:00", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = { if (startHour > 0) startHour-- }, modifier = Modifier.weight(1f)) { Text("Start −") }
-                        FilledTonalButton(onClick = { if (startHour < endHour - 1) startHour++ }, modifier = Modifier.weight(1f)) { Text("Start +") }
-                        FilledTonalButton(onClick = { if (endHour > startHour + 1) endHour-- }, modifier = Modifier.weight(1f)) { Text("End −") }
-                        FilledTonalButton(onClick = { if (endHour < 23) endHour++ }, modifier = Modifier.weight(1f)) { Text("End +") }
+                        PressButton(onClick = { if (startHour > 0) startHour-- }, modifier = Modifier.weight(1f), tonal = true) { Text("Start −") }
+                        PressButton(onClick = { if (startHour < endHour - 1) startHour++ }, modifier = Modifier.weight(1f), tonal = true) { Text("Start +") }
+                        PressButton(onClick = { if (endHour > startHour + 1) endHour-- }, modifier = Modifier.weight(1f), tonal = true) { Text("End −") }
+                        PressButton(onClick = { if (endHour < 23) endHour++ }, modifier = Modifier.weight(1f), tonal = true) { Text("End +") }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { save() }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = MaterialTheme.shapes.extraLarge) {
+                    PressButton(onClick = { save() }, modifier = Modifier.fillMaxWidth().height(56.dp), tonal = false) {
                         Text("Save reminders", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    FilledTonalButton(
+                    PressButton(
                         onClick = {
                             if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                                 notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -633,7 +696,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = MaterialTheme.shapes.extraLarge
+                        tonal = true
                     ) {
                         Text("Send test reminder", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
@@ -888,7 +951,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 modifier = Modifier.weight(1f).height(56.dp),
                                 tonal = true,
-                                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
+                                topStart = 28.dp, topEnd = 0.dp, bottomEnd = 0.dp, bottomStart = 28.dp
                             ) { Text("+12", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                             PressButton(
                                 onClick = {
@@ -902,7 +965,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 modifier = Modifier.weight(1f).height(56.dp),
                                 tonal = true,
-                                shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
+                                topStart = 0.dp, topEnd = 28.dp, bottomEnd = 28.dp, bottomStart = 0.dp
                             ) { Text("+16", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                         }
                         Spacer(modifier = Modifier.height(12.dp))
@@ -1200,7 +1263,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v13)",
+                                    "Water Logged 0.1.0 (v14)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1213,14 +1276,7 @@ class MainActivity : ComponentActivity() {
                         floatingActionButton = {
                             // Circular Material 3 floating menu button,
                             // bottom-left, opening the left drawer.
-                            FloatingActionButton(
-                                onClick = { scope.launch { drawerState.open() } }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Menu,
-                                    contentDescription = "Open menu"
-                                )
-                            }
+                            MorphFab(onClick = { scope.launch { drawerState.open() } })
                         },
                         floatingActionButtonPosition = FabPosition.Start
                     ) { innerPadding ->
@@ -1303,7 +1359,7 @@ class MainActivity : ComponentActivity() {
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f)
                                     )
-                                    Button(
+                                    PressButton(
                                         onClick = {
                                             val ozVal = goalText.toIntOrNull()
                                             if (ozVal != null && ozVal in 16..200) {
@@ -1316,7 +1372,7 @@ class MainActivity : ComponentActivity() {
                                                 status = "Enter a goal between 16 and 200 oz"
                                             }
                                         },
-                                        shape = MaterialTheme.shapes.extraLarge
+                                        tonal = false
                                     ) { Text("Save") }
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
@@ -1325,7 +1381,7 @@ class MainActivity : ComponentActivity() {
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     listOf(48, 64, 80, 100).forEach { preset ->
-                                        FilledTonalButton(
+                                        PressButton(
                                             onClick = {
                                                 val ml = (preset * 29.5735).roundToInt()
                                                 HealthConnectWriter.setGoalMl(this@MainActivity, ml)
@@ -1334,7 +1390,7 @@ class MainActivity : ComponentActivity() {
                                                 status = "Goal saved: $preset oz"
                                             },
                                             modifier = Modifier.weight(1f),
-                                            shape = MaterialTheme.shapes.extraLarge
+                                            tonal = true
                                         ) { Text("$preset", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                                     }
                                 }
@@ -1368,16 +1424,12 @@ class MainActivity : ComponentActivity() {
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Spacer(modifier = Modifier.height(24.dp))
-                                Button(
+                                PressButton(
                             onClick = {
                                 permissionLauncher.launch(HealthConnectWriter.PERMISSIONS)
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
-                            shape = MaterialTheme.shapes.extraLarge,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
+                            tonal = false
                         ) {
                             Text(
                                 "Grant Health Connect access",
@@ -1386,7 +1438,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        FilledTonalButton(
+                        PressButton(
                             onClick = {
                                 status = when (HealthConnectClient.getSdkStatus(this@MainActivity)) {
                                     HealthConnectClient.SDK_AVAILABLE ->
@@ -1399,7 +1451,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
-                            shape = MaterialTheme.shapes.extraLarge
+                            tonal = true
                         ) {
                             Text(
                                 "Check Health Connect status",
@@ -1408,7 +1460,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        FilledTonalButton(
+                        PressButton(
                             onClick = {
                                 scope.launch {
                                     status = try {
@@ -1422,7 +1474,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
-                            shape = MaterialTheme.shapes.extraLarge
+                            tonal = true
                         ) {
                             Text(
                                 "Show granted permissions",
@@ -1431,7 +1483,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        FilledTonalButton(
+                        PressButton(
                             onClick = {
                                 scope.launch {
                                     val ml = HealthConnectWriter.todayTotalMl(this@MainActivity)
@@ -1439,7 +1491,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
-                            shape = MaterialTheme.shapes.extraLarge
+                            tonal = true
                         ) {
                             Text(
                                 "Refresh today's total",
@@ -1472,7 +1524,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v13) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v14) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1500,10 +1552,10 @@ class MainActivity : ComponentActivity() {
                                         style = MaterialTheme.typography.bodyMedium
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Button(
+                                    PressButton(
                                         onClick = { showClearConfirm = true },
                                         modifier = Modifier.fillMaxWidth().height(56.dp),
-                                        shape = MaterialTheme.shapes.extraLarge,
+                                        tonal = false,
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = MaterialTheme.colorScheme.error,
                                             contentColor = MaterialTheme.colorScheme.onError
@@ -1519,7 +1571,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Button(
+                                        PressButton(
                                             onClick = {
                                                 showClearConfirm = false
                                                 scope.launch {
@@ -1530,7 +1582,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             },
                                             modifier = Modifier.weight(1f).height(56.dp),
-                                            shape = MaterialTheme.shapes.extraLarge,
+                                            tonal = false,
                                             colors = ButtonDefaults.buttonColors(
                                                 containerColor = MaterialTheme.colorScheme.error,
                                                 contentColor = MaterialTheme.colorScheme.onError
@@ -1538,10 +1590,10 @@ class MainActivity : ComponentActivity() {
                                         ) {
                                             Text("Yes, clear it", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                         }
-                                        FilledTonalButton(
+                                        PressButton(
                                             onClick = { showClearConfirm = false },
                                             modifier = Modifier.weight(1f).height(56.dp),
-                                            shape = MaterialTheme.shapes.extraLarge
+                                            tonal = true
                                         ) {
                                             Text("Cancel", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                         }

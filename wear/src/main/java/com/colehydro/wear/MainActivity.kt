@@ -154,11 +154,25 @@ fun ExpressiveButton(
         ),
         label = "expressivePress"
     )
+    // Same corner-radius shape morph as the phone: pill (28dp)
+    // at rest, squarer (7dp) on press, with the expressive spring.
+    val morphProgress by animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = 0.4f,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "morphProgress"
+    )
+    val morphedShape = androidx.compose.foundation.shape.RoundedCornerShape(
+        28.dp * (1f - 0.75f * morphProgress)
+    )
     androidx.compose.material3.Button(
         onClick = onClick,
-        modifier = modifier.graphicsLayer(scaleX = scale, scaleY = scale),
+        modifier = modifier
+            .graphicsLayer(scaleX = scale, scaleY = scale),
         interactionSource = interactionSource,
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = morphedShape,
         colors = if (tonal) {
             ButtonDefaults.filledTonalButtonColors()
         } else {
