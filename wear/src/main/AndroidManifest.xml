@@ -4,8 +4,10 @@
     <uses-feature android:name="android.hardware.type.watch" />
 
     <application
-        android:label="Water"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:label="Water Logged"
+        android:theme="@android:style/Theme.DeviceDefault"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -20,7 +22,7 @@
             android:name=".WaterTileService"
             android:exported="true"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER"
-            android:label="Water">
+            android:label="Water Logged">
             <intent-filter>
                 <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
             </intent-filter>
@@ -39,6 +41,10 @@
                     android:host="*"
                     android:pathPrefix="/hydro/goal"
                     android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/hydro/reset"
+                    android:scheme="wear" />
             </intent-filter>
         </service>
 
@@ -47,7 +53,7 @@
             android:name=".HydrationComplicationService"
             android:exported="true"
             android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER"
-            android:label="Water today">
+            android:label="Water Logged">
             <intent-filter>
                 <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
             </intent-filter>

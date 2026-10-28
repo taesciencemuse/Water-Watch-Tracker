@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.time.LocalDate
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -114,6 +115,17 @@ class WaterRepository(private val context: Context) {
         context.dataStore.edit { it[WaterPrefs.GOAL_ML] = ml }
     }
 
+    /** Clear today's total and the unsynced tap queue, for a phone
+     *  "clear today's log" that also resets the watch. Used only by
+     *  the /hydro/reset message; it does not touch the goal. */
+    suspend fun resetToday() {
+        context.dataStore.edit {
+            it[WaterPrefs.TODAY_DATE] = today()
+            it[WaterPrefs.TODAY_ML] = 0
+            it[WaterPrefs.PENDING_JSON] = Json.encodeToString(emptyList<WaterTap>())
+        }
+    }
+
     private fun readPending(json: String?): List<WaterTap> {
         if (json.isNullOrBlank()) return emptyList()
         return try {
@@ -124,5 +136,5 @@ class WaterRepository(private val context: Context) {
     }
 }
 
-fun mlToOz(ml: Int): Int = (ml / 29.5735).toInt()
-fun ozToMl(oz: Int): Int = (oz * 29.5735).toInt()
+fun mlToOz(ml: Int): Int = (ml / 29.5735).roundToInt()
+fun ozToMl(oz: Int): Int = (oz * 29.5735).roundToInt()

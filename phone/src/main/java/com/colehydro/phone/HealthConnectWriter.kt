@@ -261,4 +261,37 @@ object HealthConnectWriter {
             .putInt("reminder_start_hour", startHour)
             .putInt("reminder_end_hour", endHour).apply()
     }
+
+    /** Delete all of today's Hydration records from Health Connect.
+     *  Returns how many were deleted. Also clears the phone's last-add
+     *  undo pointer, so Undo can't try to delete an already-deleted
+     *  record. Watch-tap dedupe (hydro_seen) is intentionally kept:
+     *  if a watch tap re-flushes after a clear, dedupe stops it from
+     *  reappearing in Health Connect. */
+    suspend fun deleteTodayRecords(context: Context): Int {
+        return try {
+            val client = HealthConnectClient.getOrCreate(context)
+            val zone = ZoneId.systemDefault()
+            val start = LocalDate.now(zone).atStartOfDay(zone).toInstant()
+            val response = client.readRecords(
+                ReadRecordsRequest(
+                    HydrationRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(start, Instant.now())
+                )
+            )
+            val ids = response.records.map { it.metadata.id }.filter { it.isNotBlank() }
+            if (ids.isNotEmpty()) {
+                client.deleteRecords(
+                    HydrationRecord::class,
+                    recordIdsList = ids,
+                    clientRecordIdsList = emptyList()
+                )
+            }
+            context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
+                .edit().remove("last_phone_record_id").apply()
+            ids.size
+        } catch (_: Exception) {
+            -1
+        }
+    }
 }

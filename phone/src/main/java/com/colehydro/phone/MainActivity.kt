@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import kotlinx.coroutines.launch
@@ -100,6 +101,7 @@ class MainActivity : ComponentActivity() {
     private enum class Screen { Main, Settings, History, Watch, Reminders }
 
     private var screen by mutableStateOf(Screen.Main)
+    private var showClearConfirm by mutableStateOf(false)
     // 0 = no back gesture in progress, 1 = gesture fully committed.
     // Driven by PredictiveBackHandler while on Settings.
     private var backProgress by mutableStateOf(0f)
@@ -151,7 +153,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun oz(ml: Int) = (ml / 29.5735).toInt()
+    // Round, don't truncate: 64 oz -> 1892.7 ml -> 1892 ml -> 63 oz
+    // was the v9 bug. Rounding both directions keeps 64 oz = 64 oz.
+    /** Phone -> watch clear: sends /hydro/reset to every connected watch.
+     *  The watch clears its today total and unsynced queue. If no watch
+     *  is connected, the phone clear still happens; the watch will
+     *  keep its old total until midnight, and any unsynced taps that
+     *  later flush are blocked by phone dedupe (hydro_seen). */
+    private fun sendResetToWatch() {
+        lifecycleScope.launch {
+            try {
+                val nodes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.google.android.gms.tasks.Tasks.await(
+                        com.google.android.gms.wearable.Wearable.getNodeClient(this@MainActivity).connectedNodes
+                    )
+                }
+                nodes.forEach { node ->
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.google.android.gms.tasks.Tasks.await(
+                            com.google.android.gms.wearable.Wearable.getMessageClient(this@MainActivity)
+                                .sendMessage(node.id, "/hydro/reset", ByteArray(0))
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun oz(ml: Int) = (ml / 29.5735).roundToInt()
 
 
     /**
@@ -206,6 +236,20 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun BarChart(labels: List<String>, valuesOz: List<Int>) {
+        // Expressive bounce: bars spring in from 0 whenever the data
+        // changes (tab switch, new tap). A single progress value for
+        // all bars keeps the animation safe when bar count changes.
+        val chartProgress = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+        androidx.compose.runtime.LaunchedEffect(valuesOz) {
+            chartProgress.snapTo(0f)
+            chartProgress.animateTo(
+                1f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessLow
+                )
+            )
+        }
         val maxVal = (valuesOz.maxOrNull() ?: 0).coerceAtLeast(1)
         val primary = MaterialTheme.colorScheme.primary
         val track = MaterialTheme.colorScheme.surfaceVariant
@@ -222,7 +266,7 @@ class MainActivity : ComponentActivity() {
                         size = androidx.compose.ui.geometry.Size(barWidth, size.height),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
                     )
-                    val h = size.height * (v.toFloat() / maxVal.toFloat())
+                    val h = size.height * (v.toFloat() / maxVal.toFloat()) * chartProgress.value
                     if (h > 0f) {
                         drawRoundRect(
                             color = primary,
@@ -274,10 +318,7 @@ class MainActivity : ComponentActivity() {
                     entries = emptyList()
                 }
                 else -> {
-                    val months = (11 downTo 0).map { today.year.let { y -> java.time.YearMonth.of(today.year, today.month).minusMonths(it.toLong()) } }.let { list ->
-                        // Rebuild cleanly: last 12 months ending this month
-                        (0..11).map { java.time.YearMonth.of(today.year, today.month).minusMonths((11 - it).toLong()) }
-                    }
+                    val months = (0..11).map { java.time.YearMonth.of(today.year, today.month).minusMonths((11 - it).toLong()) }
                     monthly = HealthConnectWriter.monthlyTotals(context, months)
                     daily = emptyList()
                 }
@@ -314,7 +355,30 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
-            when (tab) {
+            androidx.compose.animation.AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    (androidx.compose.animation.fadeIn(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        )
+                    ) + androidx.compose.animation.scaleIn(
+                        initialScale = 0.96f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        )
+                    )) togetherWith androidx.compose.animation.fadeOut(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessLow
+                        )
+                    )
+                },
+                label = "historyTab"
+            ) { tabState ->
+            when (tabState) {
                 0 -> {
                     // Hourly bars: 24 hours, label every 3 hours
                     val hourly = IntArray(24)
@@ -372,6 +436,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
             }
             Spacer(modifier = Modifier.height(88.dp))
         }
@@ -879,7 +944,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water (phone) 0.1.0 (v9)",
+                                    "Water Logged 0.1.0 (v10)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -985,7 +1050,7 @@ class MainActivity : ComponentActivity() {
                                         onClick = {
                                             val ozVal = goalText.toIntOrNull()
                                             if (ozVal != null && ozVal in 16..200) {
-                                                val ml = (ozVal * 29.5735).toInt()
+                                                val ml = (ozVal * 29.5735).roundToInt()
                                                 HealthConnectWriter.setGoalMl(this@MainActivity, ml)
                                                 goalMl = ml
                                                 sendGoalToWatch(ml)
@@ -1005,7 +1070,7 @@ class MainActivity : ComponentActivity() {
                                     listOf(48, 64, 80, 100).forEach { preset ->
                                         FilledTonalButton(
                                             onClick = {
-                                                val ml = (preset * 29.5735).toInt()
+                                                val ml = (preset * 29.5735).roundToInt()
                                                 HealthConnectWriter.setGoalMl(this@MainActivity, ml)
                                                 goalMl = ml
                                                 goalText = preset.toString()
@@ -1018,7 +1083,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    "Health Connect doesn't store a hydration goal, so this goal lives in this app only. For now it changes the phone display only, not the watch tile goal.",
+                                    "Health Connect doesn't store a hydration goal, so this goal lives in this app only. Saving it also sends it to the watch, so phone, Tile and complication use the same goal.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
@@ -1150,10 +1215,81 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water (phone) 0.1.0 (v9) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v10) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(24.dp)) {
+                                Text(
+                                    "Clear today's log",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                if (!showClearConfirm) {
+                                    Text(
+                                        "Deletes all of today's water entries from Health Connect and resets the watch's today total and unsynced queue.",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Button(
+                                        onClick = { showClearConfirm = true },
+                                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.error,
+                                            contentColor = MaterialTheme.colorScheme.onError
+                                        )
+                                    ) {
+                                        Text("Clear today's log", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Text(
+                                        "Are you sure? This deletes today's log and can't be undone.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Button(
+                                            onClick = {
+                                                showClearConfirm = false
+                                                scope.launch {
+                                                    val count = HealthConnectWriter.deleteTodayRecords(this@MainActivity)
+                                                    sendResetToWatch()
+                                                    status = if (count >= 0) "Cleared today's log ($count entries)" else "Couldn't clear today's log"
+                                                    refreshTotal()
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f).height(56.dp),
+                                            shape = MaterialTheme.shapes.extraLarge,
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.error,
+                                                contentColor = MaterialTheme.colorScheme.onError
+                                            )
+                                        ) {
+                                            Text("Yes, clear it", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        }
+                                        FilledTonalButton(
+                                            onClick = { showClearConfirm = false },
+                                            modifier = Modifier.weight(1f).height(56.dp),
+                                            shape = MaterialTheme.shapes.extraLarge
+                                        ) {
+                                            Text("Cancel", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
                             }
                         }
                                     }
