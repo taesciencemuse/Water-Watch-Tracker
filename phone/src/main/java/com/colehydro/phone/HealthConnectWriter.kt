@@ -37,6 +37,58 @@ object HealthConnectWriter {
         HealthConnectClient.getSdkStatus(context) ==
             HealthConnectClient.SDK_AVAILABLE
 
+    /**
+     * Manual add from the phone main screen: writes one HydrationRecord
+     * straight to Health Connect (no watch queue involved) and remembers
+     * its record id so the next Undo can delete exactly that record.
+     * Returns false if the write failed (e.g. permission not granted).
+     */
+    suspend fun writeManualMl(context: Context, ml: Int): Boolean {
+        return try {
+            val client = HealthConnectClient.getOrCreate(context)
+            val instant = Instant.now()
+            val zone = ZoneId.systemDefault().rules.getOffset(instant)
+            val response = client.insertRecords(
+                listOf(
+                    HydrationRecord(
+                        startTime = instant,
+                        startZoneOffset = zone,
+                        endTime = instant,
+                        endZoneOffset = zone,
+                        volume = Volume.milliliters(ml.toDouble()),
+                        metadata = Metadata.manualEntry()
+                    )
+                )
+            )
+            val id = response.recordIdsList.firstOrNull()
+            if (id != null) {
+                context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
+                    .edit().putString("last_phone_record_id", id).apply()
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Deletes the most recent phone manual add, if there is one. */
+    suspend fun undoLastPhoneAdd(context: Context): Boolean {
+        return try {
+            val prefs = context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
+            val id = prefs.getString("last_phone_record_id", null) ?: return false
+            val client = HealthConnectClient.getOrCreate(context)
+            client.deleteRecords(
+                HydrationRecord::class,
+                recordIdsList = listOf(id),
+                clientRecordIdsList = emptyList()
+            )
+            prefs.edit().remove("last_phone_record_id").apply()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     suspend fun writeTapIfNew(
         context: Context,
         tapId: String,
