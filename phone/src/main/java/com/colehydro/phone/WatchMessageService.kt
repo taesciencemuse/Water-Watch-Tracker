@@ -40,9 +40,10 @@ class WatchMessageService : WearableListenerService() {
         scope.launch {
             try {
                 HealthConnectWriter.saveLastWatchTap(applicationContext, tap.ml, tap.timestampMillis)
-                HealthConnectWriter.writeTapIfNew(
+                val isNew = HealthConnectWriter.writeTapIfNew(
                     applicationContext, tap.id, tap.ml, tap.timestampMillis
                 )
+                if (isNew) HealthConnectWriter.addToCachedTotalMl(applicationContext, tap.ml)
                 WaterWidgetHelper.updateAll(applicationContext)
             } catch (_: Exception) {
                 // Leave it: the watch queue will retry on next Tile open.

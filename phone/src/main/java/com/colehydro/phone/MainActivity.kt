@@ -110,6 +110,10 @@ class MainActivity : ComponentActivity() {
     private var goalMl by mutableStateOf(1893)
     private var goalText by mutableStateOf("64")
     private var lastAction by mutableStateOf("")
+    // First-launch permission chain: after the notification prompt
+    // answers, launch Health Connect next (one dialog at a time).
+    private var firstLaunchPendingHC = false
+    private var hcPermissionChanged by mutableStateOf(0)
 
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -119,11 +123,21 @@ class MainActivity : ComponentActivity() {
         } else {
             "Health Connect permission NOT fully granted — taps will queue on the watch"
         }
+        hcPermissionChanged++
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { _ -> }
+    ) { _ ->
+        // First-launch chain only: Reminders Save/Test also use this
+        // launcher, and must NOT auto-launch Health Connect after.
+        if (firstLaunchPendingHC) {
+            firstLaunchPendingHC = false
+            getSharedPreferences("hydro_prefs", MODE_PRIVATE).edit()
+                .putBoolean("health_connect_permission_asked", true).apply()
+            permissionLauncher.launch(HealthConnectWriter.PERMISSIONS)
+        }
+    }
 
     /** Phone -> watch goal sync: sends the saved goal over the Data Layer
      *  (path /hydro/goal, plain ml integer) to every connected watch node.
@@ -667,8 +681,12 @@ class MainActivity : ComponentActivity() {
                     duration = androidx.compose.material3.SnackbarDuration.Short
                 )
                 if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                    vibrateClick(this@MainActivity)
                     HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
-                    lastAction = "Last phone add undone"
+                    // No persistent "undone" text: the total dropping back
+                    // is the confirmation. lastAction stays only for
+                    // errors (couldn't log, invalid custom amount).
+                    lastAction = ""
                     refreshTotal()
                 }
             }
@@ -763,7 +781,7 @@ class MainActivity : ComponentActivity() {
                             }
                             val idleWavePhase = idlePhaseAnim.value
                             androidx.compose.foundation.layout.Box {
-                                val waveColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                val waveColor = androidx.compose.ui.graphics.Color(0xFF2196F3).copy(alpha = 0.35f) // v13: bright blue, fixed — stays blue regardless of wallpaper/theme
                                 Canvas(modifier = Modifier.matchParentSize()) {
                                     val progress = animatedProgress
                                     val waveTop = size.height * (1f - progress)
@@ -836,6 +854,7 @@ class MainActivity : ComponentActivity() {
                         Spacer(modifier = Modifier.height(24.dp))
                         PressButton(
                             onClick = {
+                                vibrateClick(this@MainActivity)
                                 scope.launch {
                                     val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 237)
                                     if (err == null) { lastAction = ""; showLoggedSnackbar("+8 oz") } else lastAction = "Couldn't log: $err"
@@ -859,6 +878,7 @@ class MainActivity : ComponentActivity() {
                         ) {
                             PressButton(
                                 onClick = {
+                                    vibrateClick(this@MainActivity)
                                     scope.launch {
                                         val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 355)
                                         if (err == null) { lastAction = ""; showLoggedSnackbar("+12 oz") } else lastAction = "Couldn't log: $err"
@@ -872,6 +892,7 @@ class MainActivity : ComponentActivity() {
                             ) { Text("+12", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                             PressButton(
                                 onClick = {
+                                    vibrateClick(this@MainActivity)
                                     scope.launch {
                                         val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 473)
                                         if (err == null) { lastAction = ""; showLoggedSnackbar("+16 oz") } else lastAction = "Couldn't log: $err"
@@ -885,13 +906,13 @@ class MainActivity : ComponentActivity() {
                             ) { Text("+16", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                         }
                         Spacer(modifier = Modifier.height(12.dp))
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             OutlinedTextField(
                                 value = customOzText,
                                 onValueChange = { customOzText = it.filter { ch -> ch.isDigit() } },
-                                label = { Text("Custom oz") },
+                                placeholder = { Text("Custom oz") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f).height(56.dp)
                             )
                             PressButton(
                                 onClick = {
@@ -900,6 +921,7 @@ class MainActivity : ComponentActivity() {
                                         lastAction = "Enter a custom amount between 1 and 100 oz"
                                     } else {
                                         val ml = (customOz * 29.5735).roundToInt()
+                                        vibrateClick(this@MainActivity)
                                         scope.launch {
                                             val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, ml)
                                             if (err == null) { lastAction = ""; customOzText = ""; showLoggedSnackbar("+$customOz oz") } else lastAction = "Couldn't log: $err"
@@ -1036,10 +1058,65 @@ class MainActivity : ComponentActivity() {
                         } catch (_: Exception) {
                             null
                         }
+                        // Cache for the widget: the app's aggregate
+                        // read works here, even when the widget's
+                        // own read returns 0 (Oct 28 bug).
+                        if (totalMl != null) HealthConnectWriter.setCachedTotalMl(this@MainActivity, totalMl!!)
                     }
                 }
 
                 LaunchedEffect(screen) { refreshTotal() }
+                // Widget central update: whenever the app's total
+                // changes for any reason (phone add, watch tap while
+                // the app is open, undo, clear, permission grant),
+                // push it to every placed widget. This covers paths
+                // the individual button handlers miss.
+                LaunchedEffect(totalMl) {
+                    if (totalMl != null) WaterWidgetHelper.updateAll(this@MainActivity)
+                }
+                // Periodic widget fallback: 15 min, kept (not replaced)
+                // on every open, so a missed manual update self-heals.
+                LaunchedEffect(Unit) {
+                    val wm = androidx.work.WorkManager.getInstance(this@MainActivity)
+                    val request = androidx.work.PeriodicWorkRequestBuilder<WidgetUpdateWorker>(15, java.util.concurrent.TimeUnit.MINUTES).build()
+                    wm.enqueueUniquePeriodicWork("water_widget_update", androidx.work.ExistingPeriodicWorkPolicy.KEEP, request)
+                }
+                LaunchedEffect(hcPermissionChanged) { if (hcPermissionChanged > 0) refreshTotal() }
+
+                // First-install permission requests (v13): ask for
+                // notification permission (Android 13+) and Health
+                // Connect permission on first open, one dialog at a
+                // time, and only once per install. Each is tracked in
+                // hydro_prefs, so a denial is not re-asked on every
+                // open — the user can still re-grant via Settings
+                // (Health Connect) or Reminders Save/Test (notifications).
+                // Already-granted permissions are never re-asked:
+                // notification is checked synchronously, Health Connect
+                // is checked via getGrantedPermissions before launching.
+                LaunchedEffect(Unit) {
+                    val prefs = getSharedPreferences("hydro_prefs", MODE_PRIVATE)
+                    val notifAsked = prefs.getBoolean("notification_permission_asked", false)
+                    val hcAsked = prefs.getBoolean("health_connect_permission_asked", false)
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                        !notifAsked
+                    ) {
+                        prefs.edit().putBoolean("notification_permission_asked", true).apply()
+                        firstLaunchPendingHC = !hcAsked
+                        notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    } else if (!hcAsked) {
+                        val granted = try {
+                            HealthConnectClient.getOrCreate(this@MainActivity)
+                                .permissionController.getGrantedPermissions()
+                        } catch (_: Exception) {
+                            emptySet()
+                        }
+                        prefs.edit().putBoolean("health_connect_permission_asked", true).apply()
+                        if (!granted.containsAll(HealthConnectWriter.PERMISSIONS)) {
+                            permissionLauncher.launch(HealthConnectWriter.PERMISSIONS)
+                        }
+                    }
+                }
 
                 // Expressive motion: total/progress spring to the new
                 // value instead of jumping, using expressive spring physics.
@@ -1123,7 +1200,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v12)",
+                                    "Water Logged 0.1.0 (v13)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1395,7 +1472,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v12) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v13) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

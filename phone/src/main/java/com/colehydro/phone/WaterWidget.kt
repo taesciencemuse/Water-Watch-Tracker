@@ -55,7 +55,8 @@ object WaterWidgetHelper {
                 manager.getGlanceIds(WaterWidget::class.java).forEach { id ->
                     WaterWidget().update(context, id)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("WaterWidget", "updateAll failed", e)
             }
         }
     }
@@ -67,9 +68,14 @@ class AddWaterAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters
     ) {
-        try {
+        val wrote = try {
             HealthConnectWriter.writeManualMl(context, 237)
         } catch (_: Exception) {
+            false
+        }
+        if (wrote) {
+            vibrateClick(context)
+            HealthConnectWriter.addToCachedTotalMl(context, 237)
         }
         try {
             WaterWidget().update(context, glanceId)
@@ -80,7 +86,18 @@ class AddWaterAction : ActionCallback {
 
 class WaterWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val totalMl = try { HealthConnectWriter.todayTotalMl(context) } catch (_: Exception) { 0 }
+        // Oct 28 widget bug: widget +8 writes (app total goes up)
+        // and a fresh re-add both still show 0, while the goal
+        // (prefs) reads fine. So the widget's aggregate read is
+        // returning 0 in this context even though the same call
+        // works in the app. Take the max of three sources, so a
+        // failing read can never drag a known total back to 0:
+        // aggregate, entries-sum, and the app's cached today total.
+        val aggMl = try { HealthConnectWriter.todayTotalMl(context) } catch (_: Exception) { 0 }
+        val entriesMl = try { HealthConnectWriter.todayTotalViaEntries(context) } catch (_: Exception) { 0 }
+        val cachedMl = try { HealthConnectWriter.getCachedTotalMl(context) } catch (_: Exception) { 0 }
+        android.util.Log.d("WaterWidget", "provideGlance agg=$aggMl entries=$entriesMl cached=$cachedMl")
+        val totalMl = maxOf(aggMl, entriesMl, cachedMl)
         val goalMl = HealthConnectWriter.getGoalMl(context)
         val totalOz = (totalMl / 29.5735).roundToInt()
         val goalOz = (goalMl / 29.5735).roundToInt()

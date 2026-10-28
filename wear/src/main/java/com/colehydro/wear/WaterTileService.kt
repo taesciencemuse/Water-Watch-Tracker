@@ -27,18 +27,15 @@ import kotlinx.coroutines.launch
  *   Row: +12 oz | +16 oz | Undo
  *   Footer: "Synced" or "Pending — phone away" (pending count)
  *
- * v1 interaction note — read this before changing it:
- * Tile buttons here use LaunchAction to MainActivity with an amount
- * extra. That is the documented, version-stable path: tapping the
- * Tile button opens the tiny quick-add screen, which logs immediately
- * and shows the new total. It is still one tap from the Tile, with no
- * app drawer involved.
- *
- * The stretch goal is LoadAction (delegate to this TileService so the
- * tap logs without opening any activity at all). LoadAction click
- * dispatch differs between ProtoLayout versions, so prototype it
- * after the LaunchAction version works on the Pixel Watch 5, rather
- * than building v1 on it.
+ * Direct-log interaction (v13, items 5): Tile buttons use
+ * LoadAction, not LaunchAction. A tap re-requests this TileService
+ * with the clicked element's id in
+ * requestParams.currentState.lastClickableId; onTileRequest logs
+ * that amount (or undoes) BEFORE snapshotting, so the returned
+ * tile already shows the new total — no activity opens at all.
+ * CRITICAL: the returned tile must carry a cleared (empty) state,
+ * otherwise the next normal tile request would see the same
+ * lastClickableId again and log a second drink.
  */
 class WaterTileService : TileService() {
 
@@ -48,6 +45,35 @@ class WaterTileService : TileService() {
         requestParams: RequestBuilders.TileRequest
     ): ListenableFuture<TileBuilders.Tile> = scope.future {
         val repo = WaterRepository(this@WaterTileService)
+        // Direct log: LoadAction tap arrives here as lastClickableId.
+        // Log BEFORE snapshotting, so the returned tile shows the
+        // new total. Unknown / empty ids mean a normal refresh.
+        val clicked = try { requestParams.currentState?.lastClickableId } catch (_: Exception) { null }
+        if (clicked == "add_default" || clicked == "add_12" || clicked == "add_16") {
+            vibrateClick(this@WaterTileService)
+            val ( _, _, defaultMl0) = repo.snapshot()
+            val ml = when (clicked) {
+                "add_12" -> ozToMl(12)
+                "add_16" -> ozToMl(16)
+                else -> defaultMl0
+            }
+            val tap = WaterTap(
+                id = java.util.UUID.randomUUID().toString(),
+                ml = ml,
+                timestampMillis = System.currentTimeMillis()
+            )
+            repo.addTap(tap)
+            SyncSender.sendTap(this@WaterTileService, tap)
+            try {
+                androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester.create(
+                    this@WaterTileService,
+                    android.content.ComponentName(this@WaterTileService, HydrationComplicationService::class.java)
+                ).requestUpdateAll()
+            } catch (_: Exception) { }
+        } else if (clicked == "undo") {
+            vibrateClick(this@WaterTileService)
+            repo.undoLastTap()
+        }
         // Try to flush anything queued while the phone was away.
         scope.launch { SyncSender.flushPending(this@WaterTileService, repo) }
         val (todayMl, goalMl, defaultMl) = repo.snapshot()
@@ -86,6 +112,7 @@ class WaterTileService : TileService() {
             .build()
 
         TileBuilders.Tile.Builder()
+            .setState(androidx.wear.protolayout.StateBuilders.State.Builder().build())
             .setResourcesVersion("1")
             .setTileTimeline(
                 TimelineBuilders.Timeline.Builder()
@@ -140,19 +167,13 @@ class WaterTileService : TileService() {
             .addContent(Text.Builder(this, label).build())
             .build()
 
-    private fun launchAdd(ml: Int): ActionBuilders.LaunchAction {
-        // ml == -1 means Undo. MainActivity interprets the extra.
-        return ActionBuilders.LaunchAction.Builder()
-            .setAndroidActivity(
-                ActionBuilders.AndroidActivity.Builder()
-                    .setPackageName(packageName)
-                    .setClassName(MainActivity::class.java.name)
-                    .addKeyToExtraMapping(
-                        MainActivity.EXTRA_AMOUNT_ML,
-                        ActionBuilders.stringExtra(ml.toString())
-                    )
-                    .build()
-            )
+    private fun launchAdd(ml: Int): ActionBuilders.LoadAction {
+        // Direct log: no activity, no extra. The amount is recovered
+        // from the clickable id in onTileRequest (add_default /
+        // add_12 / add_16 / undo), so the ml argument is kept only
+        // for the button label's call site — the id carries it.
+        return ActionBuilders.LoadAction.Builder()
+            .setRequestState(androidx.wear.protolayout.StateBuilders.State.Builder().build())
             .build()
     }
 

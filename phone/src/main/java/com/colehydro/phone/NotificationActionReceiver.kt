@@ -82,7 +82,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val pending = goAsync()
         scope.launch {
             try {
-                HealthConnectWriter.writeManualMl(context, 237)
+                val wrote = HealthConnectWriter.writeManualMl(context, 237)
+                if (wrote) {
+                    vibrateClick(context)
+                    HealthConnectWriter.addToCachedTotalMl(context, 237)
+                }
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 manager.cancel(notificationId)
                 WaterWidgetHelper.updateAll(context)

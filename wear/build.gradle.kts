@@ -5,15 +5,38 @@ plugins {
 }
 
 android {
+    // Persistent debug signing (v13, same lesson as phone v12):
+    // wear v2 was signed 9d01… with a lost default keystore, so v3
+    // requires an uninstall/reinstall. Pin wear to wear-debug.keystore
+    // (cert 28b6…, copied from /root/.android at v13 packaging) so
+    // v4+ updates over v3 cleanly. NEVER push this keystore to GitHub.
+    // Falls back to default if the file is missing, so clones build.
+    if (file("../wear-debug.keystore").exists()) {
+        signingConfigs {
+            create("persistentDebug") {
+                storeFile = file("../wear-debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
     namespace = "com.colehydro.wear"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "com.colehydro.wear"
         minSdk = 30
-        targetSdk = 35
-        versionCode = 2
+        targetSdk = 36
+        versionCode = 3
         versionName = "0.1.0"
+    }
+    buildTypes {
+        getByName("debug") {
+            if (file("../wear-debug.keystore").exists()) {
+                signingConfig = signingConfigs.getByName("persistentDebug")
+            }
+        }
     }
 
     buildFeatures {

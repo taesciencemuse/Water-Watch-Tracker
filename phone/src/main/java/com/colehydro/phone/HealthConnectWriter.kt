@@ -171,6 +171,44 @@ object HealthConnectWriter {
         }
     }
 
+    /** Today total via readRecords, summed (not aggregate).
+     *  The History tab uses this path and it works in the app, so
+     *  the widget uses it as a second opinion: if aggregate returns
+     *  0 in the widget context but entries exist, entries win. */
+    suspend fun todayTotalViaEntries(context: Context): Int {
+        val zone = ZoneId.systemDefault()
+        val start = LocalDate.now(zone).atStartOfDay(zone).toInstant()
+        return readHydrationEntries(context, start, Instant.now()).sumOf { it.ml }
+    }
+
+    /** App's last known today total, for the widget fallback.
+     *  refreshTotal() in the app writes this (its aggregate read
+     *  works in the Activity context). The widget reads it when
+     *  its own Health Connect reads come back 0, so it never
+     *  shows 0 after the app has logged water today. */
+    fun getCachedTotalMl(context: Context): Int {
+        val prefs = context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
+        val today = LocalDate.now(ZoneId.systemDefault()).toString()
+        return if (prefs.getString("widget_total_date", null) == today) {
+            prefs.getInt("widget_total_ml", 0)
+        } else 0
+    }
+
+    fun setCachedTotalMl(context: Context, ml: Int) {
+        val today = LocalDate.now(ZoneId.systemDefault()).toString()
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).edit()
+            .putString("widget_total_date", today)
+            .putInt("widget_total_ml", ml).apply()
+    }
+
+    /** Increment today's cached total by a just-logged amount.
+     *  Used by widget +8, notification +8, and watch taps, which
+     *  know the amount they just wrote even if a Health Connect
+     *  re-read in that background context returns 0. */
+    fun addToCachedTotalMl(context: Context, ml: Int) {
+        setCachedTotalMl(context, getCachedTotalMl(context) + ml)
+    }
+
     data class HydrationEntry(val timeMillis: Long, val ml: Int)
 
     suspend fun readHydrationEntries(context: Context, start: Instant, end: Instant): List<HydrationEntry> {

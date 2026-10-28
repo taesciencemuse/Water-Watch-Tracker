@@ -4,7 +4,12 @@ import android.content.ComponentName
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -120,6 +126,49 @@ class MainActivity : ComponentActivity() {
             // Watch faces that are not currently using this complication
             // simply ignore the request; never crash the quick-add flow.
         }
+    }
+}
+
+/**
+ * Big Material Expressive-style button for the watch quick-add
+ * screen (v13). Tiles (ProtoLayout) cannot do Compose animations,
+ * so this is where the expressive animation lives: a press scales
+ * the button to 0.93 with a medium-bouncy spring, and releases
+ * back with the same spring — plus a haptic tick on tap, via
+ * vibrateClick in the onClick wrapper below.
+ */
+@Composable
+fun ExpressiveButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tonal: Boolean = false,
+    content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.93f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "expressivePress"
+    )
+    androidx.compose.material3.Button(
+        onClick = onClick,
+        modifier = modifier.graphicsLayer(scaleX = scale, scaleY = scale),
+        interactionSource = interactionSource,
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = if (tonal) {
+            ButtonDefaults.filledTonalButtonColors()
+        } else {
+            ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            )
+        }
+    ) {
+        content()
     }
 }
 
@@ -262,17 +311,12 @@ fun WaterScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
-            // Big expressive main button.
-            Button(
-                onClick = { log(defaultMl) },
+            // Big expressive main button: press scale + haptic.
+            ExpressiveButton(
+                onClick = { vibrateClick(context); log(defaultMl) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp),
-                shape = MaterialTheme.shapes.extraLarge,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                    .height(64.dp)
             ) {
                 Text(
                     "+${mlToOz(defaultMl)} oz",
@@ -285,22 +329,23 @@ fun WaterScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FilledTonalButton(
-                    onClick = { log(ozToMl(12)) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = MaterialTheme.shapes.large
+                ExpressiveButton(
+                    onClick = { vibrateClick(context); log(ozToMl(12)) },
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    tonal = true
                 ) { Text("+12", style = MaterialTheme.typography.titleMedium) }
-                FilledTonalButton(
-                    onClick = { log(ozToMl(16)) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = MaterialTheme.shapes.large
+                ExpressiveButton(
+                    onClick = { vibrateClick(context); log(ozToMl(16)) },
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    tonal = true
                 ) { Text("+16", style = MaterialTheme.typography.titleMedium) }
-                FilledTonalButton(
+                ExpressiveButton(
                     onClick = {
+                        vibrateClick(context)
                         scope.launch { repo.undoLastTap(); refresh(); onLogged() }
                     },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    shape = MaterialTheme.shapes.large
+                    modifier = Modifier.weight(1f).height(56.dp),
+                    tonal = true
                 ) { Text("Undo", style = MaterialTheme.typography.titleMedium) }
             }
             Spacer(modifier = Modifier.height(8.dp))

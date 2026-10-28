@@ -18,13 +18,10 @@ import androidx.wear.watchface.complications.datasource.SuspendingComplicationDa
  * differently by slot: a ring / arc for RANGED_VALUE and
  * GOAL_PROGRESS slots, plain text ("32 oz") for SHORT_TEXT slots.
  *
- * IMPORTANT correction to the earlier sketch: a complication tap is
- * a PendingIntent, not a jump to the Tile carousel. In v1, tapping
- * the complication opens MainActivity (the quick-add screen) — one
- * more tap there logs a drink. A direct-log tap (PendingIntent to a
- * BroadcastReceiver that adds the default amount) is a stretch to
- * prototype after v1, not a promised behaviour, because tap-action
- * handling varies by watch face.
+ * Direct log (v13, item 6): a complication tap is a PendingIntent
+ * to LogWaterReceiver, which logs the default amount (+8 oz) with
+ * no activity opening at all. MainActivity is still the watch
+ * app-list quick-add screen; the complication no longer opens it.
  *
  * Updates are manual (UPDATE_PERIOD_SECONDS = 0 in the manifest):
  * after every tap, MainActivity / the Tile must request a
@@ -56,10 +53,10 @@ class HydrationComplicationService : SuspendingComplicationDataSourceService() {
     }
 
     private fun tapAction(): PendingIntent {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        val intent = Intent(this, LogWaterReceiver::class.java).apply {
+            action = LogWaterReceiver.ACTION_LOG_DEFAULT
         }
-        return PendingIntent.getActivity(
+        return PendingIntent.getBroadcast(
             this, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

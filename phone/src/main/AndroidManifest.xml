@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Health Connect: phone is the writer. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.health.READ_HYDRATION" />
     <uses-permission android:name="android.permission.health.WRITE_HYDRATION" />
 
@@ -27,6 +28,9 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- Health Connect rationale screen (Android 14+ standard). -->
             <intent-filter>
                 <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
@@ -70,6 +74,24 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/water_widget_info" />
         </receiver>
+
+        <!-- Quick Settings Tile (v13, item 3). -->
+        <service
+            android:name=".WaterQuickTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="Water +8"
+            android:permission="android.service.quicksettings.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Launcher shortcut target (v13, item 4): transparent, logs and finishes. -->
+        <activity
+            android:name=".ShortcutLogActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <!-- Notification +8 action (v12 item 1). Not exported: only
              this app's own PendingIntents can trigger it. -->

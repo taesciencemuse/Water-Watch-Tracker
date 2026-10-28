@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="log_8"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_log_8_short"
+        android:shortcutLongLabel="@string/shortcut_log_8_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.colehydro.phone"
+            android:targetClass="com.colehydro.phone.ShortcutLogActivity" />
+        <categories android:name="android.shortcut.conversation" />
+    </shortcut>
+</shortcuts>
