@@ -8,7 +8,7 @@
         android:shortcutLongLabel="@string/shortcut_log_8_long">
         <intent
             android:action="android.intent.action.VIEW"
-            android:targetPackage="com.colehydro.phone"
+            android:targetPackage="com.taescience.waterlogged"
             android:targetClass="com.colehydro.phone.ShortcutLogActivity" />
         <categories android:name="android.shortcut.conversation" />
     </shortcut>

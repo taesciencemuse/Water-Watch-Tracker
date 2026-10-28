@@ -105,7 +105,7 @@ class WaterWidget : GlanceAppWidget() {
         provideContent {
             Box(
                 modifier = GlanceModifier.fillMaxSize()
-                    .background(ColorProvider(androidx.compose.ui.graphics.Color(0xFFE3F2FD)))
+                    .background(ColorProvider(com.colehydro.phone.R.color.widget_bg))
                     .clickable(actionStartActivity<MainActivity>())
                     .padding(16.dp)
             ) {
@@ -115,12 +115,12 @@ class WaterWidget : GlanceAppWidget() {
                 ) {
                     Text(
                         "Water Logged",
-                        style = TextStyle(fontWeight = FontWeight.Medium)
+                        style = TextStyle(fontWeight = FontWeight.Medium, color = ColorProvider(com.colehydro.phone.R.color.widget_text))
                     )
                     Spacer(modifier = GlanceModifier.height(4.dp))
                     Text(
                         "$totalOz / $goalOz oz",
-                        style = TextStyle(fontWeight = FontWeight.Bold)
+                        style = TextStyle(fontWeight = FontWeight.Bold, color = ColorProvider(com.colehydro.phone.R.color.widget_text))
                     )
                     Spacer(modifier = GlanceModifier.height(8.dp))
                     LinearProgressIndicator(
@@ -135,7 +135,7 @@ class WaterWidget : GlanceAppWidget() {
                         Text(
                             text = "+8 oz",
                             modifier = GlanceModifier.clickable(actionRunCallback<AddWaterAction>(actionParametersOf())),
-                            style = TextStyle(fontWeight = FontWeight.Bold)
+                            style = TextStyle(fontWeight = FontWeight.Bold, color = ColorProvider(com.colehydro.phone.R.color.widget_text))
                         )
                     }
                 }

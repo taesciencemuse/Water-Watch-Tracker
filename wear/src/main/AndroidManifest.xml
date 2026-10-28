@@ -46,6 +46,14 @@
                     android:host="*"
                     android:pathPrefix="/hydro/reset"
                     android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/hydro/total"
+                    android:scheme="wear" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/hydro/default"
+                    android:scheme="wear" />
             </intent-filter>
         </service>
 

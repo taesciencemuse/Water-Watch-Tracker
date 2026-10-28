@@ -2,6 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Health Connect: phone is the writer. -->
+    <!-- Notifications: REQUIRED for the permission to exist at all.
+         Without this declaration, Android never lists Notifications
+         in Settings > Apps > Water Logged > Permissions, the
+         RequestPermission dialog never appears, and notify() is
+         silently dropped on Android 13+. This was the v13/v14 bug:
+         the code requested POST_NOTIFICATIONS but the manifest
+         never declared it. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.health.READ_HYDRATION" />
     <uses-permission android:name="android.permission.health.WRITE_HYDRATION" />

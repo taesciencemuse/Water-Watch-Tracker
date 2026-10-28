@@ -43,11 +43,37 @@ class WatchMessageService : WearableListenerService() {
                 val isNew = HealthConnectWriter.writeTapIfNew(
                     applicationContext, tap.id, tap.ml, tap.timestampMillis
                 )
-                if (isNew) HealthConnectWriter.addToCachedTotalMl(applicationContext, tap.ml)
+                if (isNew) {
+                    HealthConnectWriter.addToCachedTotalMl(applicationContext, tap.ml)
+                    // Send the fresh HC total back to the watch, so
+                    // phone adds appear on the watch face (see
+                    // WaterRepository.displayedTodayMl). A tap older
+                    // than the last clear returns false above and is
+                    // dropped, not re-sent.
+                    val total = HealthConnectWriter.todayTotalMlOrNull(applicationContext)
+                    if (total != null) sendTotalToWatch(applicationContext, total)
+                }
                 WaterWidgetHelper.updateAll(applicationContext)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("WatchMessage", "watch tap failed", e)
                 // Leave it: the watch queue will retry on next Tile open.
             }
         }
     }
+}
+
+/** Phone -> watch HC-total message, for the service context
+ *  (MainActivity has its own lifecycleScope version). */
+suspend fun sendTotalToWatch(context: android.content.Context, ml: Int) {
+    try {
+        val nodes = com.google.android.gms.tasks.Tasks.await(
+            com.google.android.gms.wearable.Wearable.getNodeClient(context).connectedNodes
+        )
+        for (node in nodes) {
+            com.google.android.gms.tasks.Tasks.await(
+                com.google.android.gms.wearable.Wearable.getMessageClient(context)
+                    .sendMessage(node.id, "/hydro/total", ml.toString().toByteArray(Charsets.UTF_8))
+            )
+        }
+    } catch (_: Exception) { }
 }

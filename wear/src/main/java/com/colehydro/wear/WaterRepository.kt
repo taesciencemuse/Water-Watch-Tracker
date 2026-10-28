@@ -38,6 +38,10 @@ object WaterPrefs {
     val TODAY_DATE = stringPreferencesKey("today_date")
     val TODAY_ML = intPreferencesKey("today_ml")
     val PENDING_JSON = stringPreferencesKey("pending_json")
+    val LAST_SYNCED_ID = stringPreferencesKey("last_synced_id")
+    val LAST_SYNCED_ML = intPreferencesKey("last_synced_ml")
+    val HC_TOTAL_ML = intPreferencesKey("hc_total_ml")
+    val HC_TOTAL_DATE = stringPreferencesKey("hc_total_date")
 }
 
 class WaterRepository(private val context: Context) {
@@ -80,20 +84,14 @@ class WaterRepository(private val context: Context) {
     }
 
     suspend fun undoLastTap(): Int? {
-        // Undo is local-only for v1: it removes the last tap from today's
-        // total and from the pending queue if it has not synced yet.
-        // If the tap already reached Health Connect, v1 does not try to
-        // delete the Health Connect record — that is a v2 addition, and
-        // deleting the wrong record would be worse than a stale total.
-        val prefs = context.dataStore.data.first()
-        val pending = readPending(prefs[WaterPrefs.PENDING_JSON])
-        val last = pending.lastOrNull() ?: return null
-        val newTotal = maxOf(0, (prefs[WaterPrefs.TODAY_ML] ?: 0) - last.ml)
-        context.dataStore.edit {
-            it[WaterPrefs.TODAY_ML] = newTotal
-            it[WaterPrefs.PENDING_JSON] = Json.encodeToString(pending.dropLast(1))
+        // Kept for Tile callers: returns the new watch total only
+        // when a pending tap was actually removed, null otherwise
+        // (already synced / nothing to undo) so callers can show
+        // feedback instead of silently dropping the total.
+        return when (undoLastTapResult()) {
+            UndoResult.PendingRemoved -> context.dataStore.data.first()[WaterPrefs.TODAY_ML] ?: 0
+            else -> null
         }
-        return newTotal
     }
 
     suspend fun pending(): List<WaterTap> =
@@ -101,10 +99,69 @@ class WaterRepository(private val context: Context) {
 
     suspend fun markSynced(ids: Set<String>) {
         context.dataStore.edit { prefs ->
-            val remaining = readPending(prefs[WaterPrefs.PENDING_JSON])
-                .filterNot { it.id in ids }
+            val pending = readPending(prefs[WaterPrefs.PENDING_JSON])
+            val remaining = pending.filterNot { it.id in ids }
             prefs[WaterPrefs.PENDING_JSON] = Json.encodeToString(remaining)
+            // Last synced, in pending order, for undo feedback: if the
+            // last tap already synced, undo cannot remove it from the
+            // watch alone (see undoLastTapResult).
+            val lastSynced = pending.lastOrNull { it.id in ids }
+            if (lastSynced != null) {
+                prefs[WaterPrefs.LAST_SYNCED_ID] = lastSynced.id
+                prefs[WaterPrefs.LAST_SYNCED_ML] = lastSynced.ml
+            }
         }
+    }
+
+    /** Undo result: PendingRemoved = a pending tap was removed;
+     *  AlreadySynced = no pending tap, last tap already reached the
+     *  phone, so the watch must NOT silently drop its total;
+     *  NothingToUndo = no pending and no synced tap on record. */
+    enum class UndoResult { PendingRemoved, AlreadySynced, NothingToUndo }
+
+    suspend fun undoLastTapResult(): UndoResult {
+        val prefs = context.dataStore.data.first()
+        val pending = readPending(prefs[WaterPrefs.PENDING_JSON])
+        val last = pending.lastOrNull()
+        if (last != null) {
+            val newTotal = maxOf(0, (prefs[WaterPrefs.TODAY_ML] ?: 0) - last.ml)
+            context.dataStore.edit {
+                it[WaterPrefs.TODAY_ML] = newTotal
+                it[WaterPrefs.PENDING_JSON] = Json.encodeToString(pending.dropLast(1))
+            }
+            return UndoResult.PendingRemoved
+        }
+        return if (prefs[WaterPrefs.LAST_SYNCED_ID] != null) UndoResult.AlreadySynced
+        else UndoResult.NothingToUndo
+    }
+
+    /** HC total sent by the phone (see /hydro/total). Displayed
+     *  today total = max(watch taps total, HC total + pending ml),
+     *  so phone adds appear on the watch without double-counting
+     *  pending taps or going backwards on a stale HC total. */
+    suspend fun setHcTotalMl(ml: Int) {
+        context.dataStore.edit {
+            it[WaterPrefs.HC_TOTAL_ML] = ml
+            it[WaterPrefs.HC_TOTAL_DATE] = today()
+        }
+    }
+
+    suspend fun displayedTodayMl(): Int {
+        val prefs = context.dataStore.data.first()
+        val watchTotal = prefs[WaterPrefs.TODAY_ML] ?: 0
+        val pendingMl = readPending(prefs[WaterPrefs.PENDING_JSON]).sumOf { it.ml }
+        val hcTotal = if (prefs[WaterPrefs.HC_TOTAL_DATE] == today()) {
+            prefs[WaterPrefs.HC_TOTAL_ML] ?: 0
+        } else 0
+        return maxOf(watchTotal, hcTotal + pendingMl)
+    }
+
+    suspend fun displayedSnapshot(): Triple<Int, Int, Int> {
+        val (watchTotal, goalMl, defaultMl) = snapshot()
+        val displayed = displayedTodayMl()
+        // snapshot() already rolled the day over; displayedTodayMl
+        // re-reads the same day, so displayed >= watchTotal here.
+        return Triple(displayed, goalMl, defaultMl)
     }
 
     suspend fun setDefaultMl(ml: Int) {
@@ -123,6 +180,10 @@ class WaterRepository(private val context: Context) {
             it[WaterPrefs.TODAY_DATE] = today()
             it[WaterPrefs.TODAY_ML] = 0
             it[WaterPrefs.PENDING_JSON] = Json.encodeToString(emptyList<WaterTap>())
+            it.remove(WaterPrefs.LAST_SYNCED_ID)
+            it.remove(WaterPrefs.LAST_SYNCED_ML)
+            it[WaterPrefs.HC_TOTAL_ML] = 0
+            it[WaterPrefs.HC_TOTAL_DATE] = today()
         }
     }
 

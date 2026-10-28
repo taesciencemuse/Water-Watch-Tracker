@@ -29,7 +29,7 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
         if (HealthConnectWriter.todayTotalMl(ctx) >= HealthConnectWriter.getGoalMl(ctx)) return Result.success()
 
         val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(
+        try { manager.notify(
             1001,
             NotificationHelper.buildReminderNotification(
                 ctx, 1001,
@@ -37,6 +37,7 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
                 "Take a sip — you're working toward today's goal."
             )
         )
+        } catch (e: Exception) { android.util.Log.e("ReminderWorker", "notify failed", e) }
         return Result.success()
     }
 }

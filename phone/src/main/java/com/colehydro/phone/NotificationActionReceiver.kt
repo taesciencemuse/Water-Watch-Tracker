@@ -55,15 +55,15 @@ object NotificationHelper {
         text: String
     ): android.app.Notification {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(
-            android.app.NotificationChannel(
-                "water_reminders",
-                "Water reminders",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
+        val channel = android.app.NotificationChannel(
+            "water_reminders",
+            "Water reminders",
+            NotificationManager.IMPORTANCE_DEFAULT
         )
+        channel.description = "Reminders to drink water"
+        manager.createNotificationChannel(channel)
         return NotificationCompat.Builder(context, "water_reminders")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.colehydro.phone.R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(openAppPendingIntent(context))

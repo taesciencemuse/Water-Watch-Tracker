@@ -20,7 +20,8 @@ class WidgetUpdateWorker(appContext: Context, params: WorkerParameters) :
         return try {
             WaterWidgetHelper.updateAll(applicationContext)
             Result.success()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("WidgetUpdate", "update failed", e)
             Result.retry()
         }
     }

@@ -41,7 +41,7 @@ class HydrationComplicationService : SuspendingComplicationDataSourceService() {
         request: ComplicationRequest
     ): ComplicationData? {
         val repo = WaterRepository(this)
-        val (todayMl, goalMl, _) = repo.snapshot()
+        val (todayMl, goalMl, _) = repo.displayedSnapshot()
         val todayOz = mlToOz(todayMl).toFloat()
         val goalOz = mlToOz(goalMl).toFloat()
         return when (request.complicationType) {

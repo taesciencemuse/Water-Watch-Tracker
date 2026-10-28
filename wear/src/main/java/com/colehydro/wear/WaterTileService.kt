@@ -63,7 +63,7 @@ class WaterTileService : TileService() {
                 timestampMillis = System.currentTimeMillis()
             )
             repo.addTap(tap)
-            SyncSender.sendTap(this@WaterTileService, tap)
+            if (SyncSender.sendTap(this@WaterTileService, tap)) repo.markSynced(setOf(tap.id))
             try {
                 androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester.create(
                     this@WaterTileService,
@@ -72,11 +72,13 @@ class WaterTileService : TileService() {
             } catch (_: Exception) { }
         } else if (clicked == "undo") {
             vibrateClick(this@WaterTileService)
+            // undoLastTap returns null when already synced / nothing
+            // to undo, so the total is NOT dropped in those cases.
             repo.undoLastTap()
         }
         // Try to flush anything queued while the phone was away.
         scope.launch { SyncSender.flushPending(this@WaterTileService, repo) }
-        val (todayMl, goalMl, defaultMl) = repo.snapshot()
+        val (todayMl, goalMl, defaultMl) = repo.displayedSnapshot()
         val pending = repo.pending().size
         val todayOz = mlToOz(todayMl)
         val goalOz = mlToOz(goalMl)

@@ -47,6 +47,22 @@ class GoalMessageService : WearableListenerService() {
                     requestUpdates()
                 }
             }
+            "/hydro/total" -> {
+                val ml = String(event.data, Charsets.UTF_8).toIntOrNull() ?: return
+                if (ml !in 0..20000) return
+                scope.launch {
+                    WaterRepository(this@GoalMessageService).setHcTotalMl(ml)
+                    requestUpdates()
+                }
+            }
+            "/hydro/default" -> {
+                val ml = String(event.data, Charsets.UTF_8).toIntOrNull() ?: return
+                if (ml !in 29..2957) return // 1–100 oz
+                scope.launch {
+                    WaterRepository(this@GoalMessageService).setDefaultMl(ml)
+                    requestUpdates()
+                }
+            }
         }
     }
 

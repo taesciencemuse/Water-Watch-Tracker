@@ -107,6 +107,8 @@ class MainActivity : ComponentActivity() {
     private var backProgress by mutableStateOf(0f)
     private var status by mutableStateOf("Not checked yet")
     private var totalMl by mutableStateOf<Int?>(null)
+    private var readError by mutableStateOf(false)
+    private var lastTotalSentToWatch: Int? = null
     private var goalMl by mutableStateOf(1893)
     private var goalText by mutableStateOf("64")
     private var lastAction by mutableStateOf("")
@@ -164,6 +166,56 @@ class MainActivity : ComponentActivity() {
                 // No connected watch, or send failed: goal stays saved on
                 // the phone and will re-sync on the next goal save.
             }
+        }
+    }
+
+    /** Phone -> watch HC-total sync (audit fix): after a phone
+     *  add / undo / clear, the watch face would otherwise stay
+     *  stale, because the watch total is watch-taps only. The watch
+     *  displays max(watch total, HC total + pending ml), so a
+     *  fresh HC total lets phone adds appear without double-counting
+     *  pending taps. Sent only when the total actually changes. */
+    private fun sendTotalToWatch(ml: Int) {
+        lifecycleScope.launch {
+            try {
+                val nodes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.google.android.gms.tasks.Tasks.await(
+                        com.google.android.gms.wearable.Wearable.getNodeClient(this@MainActivity).connectedNodes
+                    )
+                }
+                nodes.forEach { node ->
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.google.android.gms.tasks.Tasks.await(
+                            com.google.android.gms.wearable.Wearable.getMessageClient(this@MainActivity)
+                                .sendMessage(node.id, "/hydro/total", ml.toString().toByteArray(Charsets.UTF_8))
+                        )
+                    }
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    /** Phone -> watch default tap (audit fix): the watch code had
+     *  setDefaultMl() but no UI ever called it, and the watch screen
+     *  claimed the default was changed on the phone. Now Settings
+     *  actually sends it, like the goal. */
+    private fun sendDefaultToWatch(ml: Int) {
+        lifecycleScope.launch {
+            try {
+                val nodes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.google.android.gms.tasks.Tasks.await(
+                        com.google.android.gms.wearable.Wearable.getNodeClient(this@MainActivity).connectedNodes
+                    )
+                }
+                nodes.forEach { node ->
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.google.android.gms.tasks.Tasks.await(
+                            com.google.android.gms.wearable.Wearable.getMessageClient(this@MainActivity)
+                                .sendMessage(node.id, "/hydro/default", ml.toString().toByteArray(Charsets.UTF_8))
+                        )
+                    }
+                }
+            } catch (_: Exception) { }
         }
     }
 
@@ -729,8 +781,17 @@ class MainActivity : ComponentActivity() {
         var streak by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
         var customOzText by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
         androidx.compose.runtime.LaunchedEffect(totalMl, goalMl) {
-            lastLoggedMillis = HealthConnectWriter.lastEntryTimeMillisToday(this@MainActivity)
-            streak = HealthConnectWriter.streakDays(this@MainActivity, goalMl)
+            // Error-vs-0: only overwrite streak / last-logged on a
+            // successful read; a failed read keeps the last known
+            // values instead of resetting them to 0 / "none".
+            HealthConnectWriter.lastEntryTimeMillisTodayResult(this@MainActivity)
+                .onSuccess { lastLoggedMillis = it }
+            HealthConnectWriter.streakDaysOrNull(this@MainActivity, goalMl)
+                ?.let { streak = it }
+        }
+        var hasUndo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+        androidx.compose.runtime.LaunchedEffect(totalMl) {
+            hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
         }
         // v12 item 10: Snackbar Undo helper. Successful phone adds
         // show a Snackbar with an Undo action instead of a permanent
@@ -745,11 +806,9 @@ class MainActivity : ComponentActivity() {
                 )
                 if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                     vibrateClick(this@MainActivity)
-                    HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
-                    // No persistent "undone" text: the total dropping back
-                    // is the confirmation. lastAction stays only for
-                    // errors (couldn't log, invalid custom amount).
-                    lastAction = ""
+                    val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
+                    lastAction = if (undone) "" else "Couldn't undo — try again"
+                    hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
                     refreshTotal()
                 }
             }
@@ -880,7 +939,8 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 if (totalMl == null) {
                                     Text(
-                                        "Permission needed — open Settings and grant Health Connect access.",
+                                        if (readError) "Couldn't read Health Connect — check Settings, then Refresh today's total."
+                                        else "Permission needed — open Settings and grant Health Connect access.",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -933,6 +993,18 @@ class MainActivity : ComponentActivity() {
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                        if (hasUndo) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(onClick = {
+                                vibrateClick(this@MainActivity)
+                                scope.launch {
+                                    val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
+                                    lastAction = if (undone) "" else "Couldn't undo — try again"
+                                    hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
+                                    refreshTotal()
+                                }
+                            }) { Text("Undo last phone add") }
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
@@ -1114,17 +1186,24 @@ class MainActivity : ComponentActivity() {
                             val client = HealthConnectClient.getOrCreate(this@MainActivity)
                             val granted = client.permissionController.getGrantedPermissions()
                             if (granted.containsAll(HealthConnectWriter.PERMISSIONS)) {
-                                HealthConnectWriter.todayTotalMl(this@MainActivity)
+                                val read = HealthConnectWriter.todayTotalMlOrNull(this@MainActivity)
+                                readError = read == null
+                                read
                             } else {
+                                readError = false
                                 null
                             }
                         } catch (_: Exception) {
+                            readError = true
                             null
                         }
-                        // Cache for the widget: the app's aggregate
-                        // read works here, even when the widget's
-                        // own read returns 0 (Oct 28 bug).
-                        if (totalMl != null) HealthConnectWriter.setCachedTotalMl(this@MainActivity, totalMl!!)
+                        if (totalMl != null) {
+                            HealthConnectWriter.setCachedTotalMl(this@MainActivity, totalMl!!)
+                            if (totalMl != lastTotalSentToWatch) {
+                                lastTotalSentToWatch = totalMl
+                                sendTotalToWatch(totalMl!!)
+                            }
+                        }
                     }
                 }
 
@@ -1146,7 +1225,12 @@ class MainActivity : ComponentActivity() {
                 }
                 LaunchedEffect(hcPermissionChanged) { if (hcPermissionChanged > 0) refreshTotal() }
 
-                // First-install permission requests (v13): ask for
+                // First-install permission requests (v13, v15 fix:
+                // notification_permission_asked_v2 — v13/v14 marked the
+                // old key "asked" even though the dialog could never
+                // appear, because the manifest never declared
+                // POST_NOTIFICATIONS. The v2 key re-asks once on
+                // first v15 open.): ask for
                 // notification permission (Android 13+) and Health
                 // Connect permission on first open, one dialog at a
                 // time, and only once per install. Each is tracked in
@@ -1158,13 +1242,13 @@ class MainActivity : ComponentActivity() {
                 // is checked via getGrantedPermissions before launching.
                 LaunchedEffect(Unit) {
                     val prefs = getSharedPreferences("hydro_prefs", MODE_PRIVATE)
-                    val notifAsked = prefs.getBoolean("notification_permission_asked", false)
+                    val notifAsked = prefs.getBoolean("notification_permission_asked_v2", false)
                     val hcAsked = prefs.getBoolean("health_connect_permission_asked", false)
                     if (Build.VERSION.SDK_INT >= 33 &&
                         androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
                         !notifAsked
                     ) {
-                        prefs.edit().putBoolean("notification_permission_asked", true).apply()
+                        prefs.edit().putBoolean("notification_permission_asked_v2", true).apply()
                         firstLaunchPendingHC = !hcAsked
                         notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                     } else if (!hcAsked) {
@@ -1263,7 +1347,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v14)",
+                                    "Water Logged 0.1.0 (v15)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1413,6 +1497,46 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column(modifier = Modifier.padding(24.dp)) {
                                 Text(
+                                    "Default watch tap",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    listOf(8, 12, 16).forEach { presetOz ->
+                                        PressButton(
+                                            onClick = {
+                                                val ml = (presetOz * 29.5735).roundToInt()
+                                                sendDefaultToWatch(ml)
+                                                status = "Default watch tap saved: $presetOz oz"
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            tonal = true
+                                        ) { Text("$presetOz", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    "This is the amount the watch Tile, complication and quick-add use for their main button. The phone's own +8 button is separate.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(24.dp)) {
+                                Text(
                                     "Health Connect",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1524,7 +1648,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v14) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v15) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

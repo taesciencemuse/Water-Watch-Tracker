@@ -41,7 +41,7 @@ class LogWaterReceiver : BroadcastReceiver() {
                 )
                 vibrateClick(context)
                 repo.addTap(tap)
-                SyncSender.sendTap(context, tap)
+                if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id))
                 WaterTileService.requestTileUpdate(context)
                 try {
                     ComplicationDataSourceUpdateRequester.create(

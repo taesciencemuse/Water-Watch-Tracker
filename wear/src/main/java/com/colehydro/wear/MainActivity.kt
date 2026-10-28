@@ -202,7 +202,7 @@ fun WaterScreen(
 
     fun refresh() {
         scope.launch {
-            val (t, g, d) = repo.snapshot()
+            val (t, g, d) = repo.displayedSnapshot()
             todayMl = t; goalMl = g; defaultMl = d
             pending = repo.pending().size
         }
@@ -211,8 +211,11 @@ fun WaterScreen(
     LaunchedEffect(Unit) {
         if (launchMl != null) {
             if (launchMl == -1) {
-                repo.undoLastTap()
-                justAdded = "Undid last drink"
+                justAdded = when (repo.undoLastTapResult()) {
+                    WaterRepository.UndoResult.PendingRemoved -> "Undid last drink"
+                    WaterRepository.UndoResult.AlreadySynced -> "Already synced — undo from phone"
+                    WaterRepository.UndoResult.NothingToUndo -> "Nothing to undo"
+                }
             } else {
                 val tap = WaterTap(
                     id = UUID.randomUUID().toString(),
@@ -220,7 +223,7 @@ fun WaterScreen(
                     timestampMillis = System.currentTimeMillis()
                 )
                 repo.addTap(tap)
-                scope.launch { SyncSender.sendTap(context, tap) }
+                scope.launch { if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id)) }
                 justAdded = "+${mlToOz(launchMl)} oz logged"
             }
             onLogged()
@@ -236,7 +239,7 @@ fun WaterScreen(
                 timestampMillis = System.currentTimeMillis()
             )
             repo.addTap(tap)
-            SyncSender.sendTap(context, tap)
+            if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id))
             justAdded = "+${mlToOz(ml)} oz logged"
             refresh()
             onLogged()
@@ -356,7 +359,14 @@ fun WaterScreen(
                 ExpressiveButton(
                     onClick = {
                         vibrateClick(context)
-                        scope.launch { repo.undoLastTap(); refresh(); onLogged() }
+                        scope.launch {
+                            when (repo.undoLastTapResult()) {
+                                WaterRepository.UndoResult.PendingRemoved -> justAdded = "Undid last drink"
+                                WaterRepository.UndoResult.AlreadySynced -> justAdded = "Already synced — undo from phone"
+                                WaterRepository.UndoResult.NothingToUndo -> justAdded = "Nothing to undo"
+                            }
+                            refresh(); onLogged()
+                        }
                     },
                     modifier = Modifier.weight(1f).height(56.dp),
                     tonal = true
