@@ -262,6 +262,55 @@ object HealthConnectWriter {
             .putInt("reminder_end_hour", endHour).apply()
     }
 
+    /** Last drink today, as epoch millis, or null if none yet today.
+     *  Read from Health Connect records, so phone adds and synced
+     *  watch taps both count. Used for the Today "Last logged" line. */
+    suspend fun lastEntryTimeMillisToday(context: Context): Long? {
+        return try {
+            val zone = ZoneId.systemDefault()
+            val start = LocalDate.now(zone).atStartOfDay(zone).toInstant()
+            val entries = readHydrationEntries(context, start, Instant.now())
+            entries.maxOfOrNull { it.timeMillis }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Streak: consecutive days hitting [goalMl], counting backwards.
+     *  Today counts only if it already hit the goal; if today is still
+     *  under goal, the streak is the run ending yesterday, so an
+     *  unfinished today does not break it. Reads up to 365 days of
+     *  records in one read, so this is one Health Connect call. */
+    suspend fun streakDays(context: Context, goalMl: Int): Int {
+        return try {
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now(zone)
+            val entries = readHydrationEntries(
+                context,
+                today.minusDays(364).atStartOfDay(zone).toInstant(),
+                today.plusDays(1).atStartOfDay(zone).toInstant()
+            )
+            val byDay = entries.groupBy {
+                Instant.ofEpochMilli(it.timeMillis).atZone(zone).toLocalDate()
+            }.mapValues { (_, list) -> list.sumOf { it.ml } }
+            var streak = 0
+            var d = today
+            if ((byDay[d] ?: 0) >= goalMl) {
+                streak = 1
+                d = d.minusDays(1)
+            } else {
+                d = d.minusDays(1)
+            }
+            while ((byDay[d] ?: 0) >= goalMl) {
+                streak++
+                d = d.minusDays(1)
+            }
+            streak
+        } catch (_: Exception) {
+            0
+        }
+    }
+
     /** Delete all of today's Hydration records from Health Connect.
      *  Returns how many were deleted. Also clears the phone's last-add
      *  undo pointer, so Undo can't try to delete an already-deleted

@@ -235,7 +235,7 @@ class MainActivity : ComponentActivity() {
     // ---------- Drawer pages: History / Watch / Reminders ----------
 
     @Composable
-    private fun BarChart(labels: List<String>, valuesOz: List<Int>) {
+    private fun BarChart(labels: List<String>, valuesOz: List<Int>, goalOz: Int? = null) {
         // Expressive bounce: bars spring in from 0 whenever the data
         // changes (tab switch, new tap). A single progress value for
         // all bars keeps the animation safe when bar count changes.
@@ -250,9 +250,10 @@ class MainActivity : ComponentActivity() {
                 )
             )
         }
-        val maxVal = (valuesOz.maxOrNull() ?: 0).coerceAtLeast(1)
+        val maxVal = maxOf((valuesOz.maxOrNull() ?: 0), goalOz ?: 0).coerceAtLeast(1)
         val primary = MaterialTheme.colorScheme.primary
         val track = MaterialTheme.colorScheme.surfaceVariant
+        val goalColor = MaterialTheme.colorScheme.tertiary
         Column(modifier = Modifier.fillMaxWidth()) {
             Canvas(modifier = Modifier.fillMaxWidth().height(160.dp)) {
                 val barSlot = size.width / labels.size.toFloat()
@@ -275,6 +276,19 @@ class MainActivity : ComponentActivity() {
                             cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f)
                         )
                     }
+                }
+                // v12 item 7: dashed goal line, if a daily goal applies.
+                // maxVal already includes goalOz, so the line is always
+                // inside the chart, even on a day that cleared the goal.
+                if (goalOz != null) {
+                    val y = size.height * (1f - goalOz.toFloat() / maxVal.toFloat())
+                    drawLine(
+                        color = goalColor,
+                        start = androidx.compose.ui.geometry.Offset(0f, y),
+                        end = androidx.compose.ui.geometry.Offset(size.width, y),
+                        strokeWidth = 3f,
+                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -406,7 +420,7 @@ class MainActivity : ComponentActivity() {
                 }
                 1 -> {
                     val labels = daily.map { it.first.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()) }
-                    BarChart(labels, daily.map { oz(it.second) })
+                    BarChart(labels, daily.map { oz(it.second) }, goalOz = oz(goalMl))
                     Spacer(modifier = Modifier.height(16.dp))
                     daily.reversed().forEach { (d, ml) ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -417,7 +431,7 @@ class MainActivity : ComponentActivity() {
                 }
                 2 -> {
                     val labels = daily.map { (d, _) -> if (d.dayOfMonth % 5 == 1) d.dayOfMonth.toString() else "" }
-                    BarChart(labels, daily.map { oz(it.second) })
+                    BarChart(labels, daily.map { oz(it.second) }, goalOz = oz(goalMl))
                     Spacer(modifier = Modifier.height(16.dp))
                     daily.reversed().forEach { (d, ml) ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -585,6 +599,30 @@ class MainActivity : ComponentActivity() {
                     Button(onClick = { save() }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = MaterialTheme.shapes.extraLarge) {
                         Text("Save reminders", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                status = "Grant notification permission, then tap Send test reminder again."
+                            } else {
+                                val manager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                                manager.notify(
+                                    1002,
+                                    NotificationHelper.buildReminderNotification(
+                                        context, 1002,
+                                        "Time for water",
+                                        "Test reminder — this is what a real reminder will look like."
+                                    )
+                                )
+                                status = "Test reminder sent."
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text("Send test reminder", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
                     if (status.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(status, style = MaterialTheme.typography.bodyMedium)
@@ -605,8 +643,37 @@ class MainActivity : ComponentActivity() {
     private fun TodayMainContent(
         scope: kotlinx.coroutines.CoroutineScope,
         animatedProgress: Float,
-        refreshTotal: () -> Unit
+        refreshTotal: () -> Unit,
+        snackbarHostState: androidx.compose.material3.SnackbarHostState
     ) {
+        // v12 items 4 + 6: last logged time and streak, refreshed
+        // whenever the total or goal changes (i.e. after any add).
+        var lastLoggedMillis by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Long?>(null) }
+        var streak by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
+        var customOzText by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+        androidx.compose.runtime.LaunchedEffect(totalMl, goalMl) {
+            lastLoggedMillis = HealthConnectWriter.lastEntryTimeMillisToday(this@MainActivity)
+            streak = HealthConnectWriter.streakDays(this@MainActivity, goalMl)
+        }
+        // v12 item 10: Snackbar Undo helper. Successful phone adds
+        // show a Snackbar with an Undo action instead of a permanent
+        // Undo button. Undo only covers phone adds, not watch taps.
+        fun showLoggedSnackbar(ozLabel: String) {
+            scope.launch {
+                snackbarHostState.currentSnackbarData?.dismiss()
+                val result = snackbarHostState.showSnackbar(
+                    message = "$ozLabel logged",
+                    actionLabel = "Undo",
+                    duration = androidx.compose.material3.SnackbarDuration.Short
+                )
+                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                    HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
+                    lastAction = "Last phone add undone"
+                    refreshTotal()
+                }
+            }
+        }
+
         Column(modifier = Modifier.fillMaxWidth()) {
                         // ---- Main screen ----
                         Card(
@@ -621,6 +688,58 @@ class MainActivity : ComponentActivity() {
                             // drawn behind the card content. Height follows
                             // the spring-animated progress; amplitude is small
                             // so it reads as texture, not decoration.
+                            // Wave slosh (momentum version, with slope): the
+                            // phone's linear accelerometer drives a spring-
+                            // settled slosh offset. Accelerating right gives
+                            // a positive X reading, water lags left, so the
+                            // offset is negative of that reading. The offset
+                            // is NOT integrated into a position (that drifts)
+                            // — it is a spring target, so a sudden move
+                            // overshoots a little and then settles, like water.
+                            // Dead zone (0.8 m/s^2) + low-pass filter keep
+                            // walking / sensor noise from shivering the wave.
+                            // Sensor is registered only while Today is
+                            // composed, and unregistered on dispose, so it
+                            // costs nothing when you're on another tab or
+                            // the app is backgrounded. Portrait-first: the
+                            // X axis is the screen's width in portrait.
+                            var sloshTarget by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+                            var filteredX by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+                            var gravityX by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+                            androidx.compose.runtime.DisposableEffect(Unit) {
+                                val sensorManager = this@MainActivity.getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager
+                                val linear = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_LINEAR_ACCELERATION)
+                                val accel = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+                                val sensor = linear ?: accel
+                                val useLinear = linear != null
+                                val listener = object : android.hardware.SensorEventListener {
+                                    override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                                        val rawX = event.values[0]
+                                        val linearX = if (useLinear) rawX else {
+                                            gravityX = gravityX * 0.8f + rawX * 0.2f
+                                            rawX - gravityX
+                                        }
+                                        filteredX = filteredX * 0.7f + linearX * 0.3f
+                                        sloshTarget = if (kotlin.math.abs(filteredX) < 0.8f) 0f
+                                        else (-filteredX / 4f).coerceIn(-1f, 1f)
+                                    }
+                                    override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+                                }
+                                if (sensor != null) {
+                                    sensorManager.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+                                }
+                                onDispose {
+                                    sensorManager.unregisterListener(listener)
+                                }
+                            }
+                            val sloshAnimated by animateFloatAsState(
+                                targetValue = sloshTarget,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessLow
+                                ),
+                                label = "waveSlosh"
+                            )
                             // Idle wave: a slow, continuous phase drift (one full
                             // cycle every 6 seconds, linear, restarting) on top of
                             // the progress-tied phase, so the wave gently rolls
@@ -653,7 +772,15 @@ class MainActivity : ComponentActivity() {
                                         moveTo(0f, waveTop)
                                         var x = 0f
                                         while (x <= size.width) {
-                                            val y = waveTop + kotlin.math.sin(x / size.width * 2f * Math.PI.toFloat() * 2f + progress * 2f + idleWavePhase) * amplitude
+                                            // Slosh: phase shift moves the sine left/right,
+                                            // slope tilts the surface — when slosh is
+                                            // positive (water piled right), the right
+                                            // side's top is lower (higher fill) and
+                                            // the left side's is higher (lower fill).
+                                            val phaseShift = sloshAnimated * 0.8f
+                                            val slopeHeight = sloshAnimated * size.height * 0.05f
+                                            val topAtX = waveTop - slopeHeight * ((x / size.width - 0.5f) * 2f)
+                                            val y = topAtX + kotlin.math.sin(x / size.width * 2f * Math.PI.toFloat() * 2f + progress * 2f + idleWavePhase + phaseShift) * amplitude
                                             lineTo(x, y)
                                             x += 8f
                                         }
@@ -694,6 +821,14 @@ class MainActivity : ComponentActivity() {
                                         progress = { animatedProgress },
                                         modifier = Modifier.fillMaxWidth().height(12.dp),
                                     )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    val lastLoggedText = if (lastLoggedMillis == null) "No drinks logged today yet"
+                                    else "Last logged: " + java.time.Instant.ofEpochMilli(lastLoggedMillis!!).atZone(java.time.ZoneId.systemDefault()).toLocalTime().format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"))
+                                    Text(lastLoggedText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    if (streak > 0) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("$streak-day streak", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
                                 }
                                 }
                             }
@@ -703,8 +838,9 @@ class MainActivity : ComponentActivity() {
                             onClick = {
                                 scope.launch {
                                     val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 237)
-                                    lastAction = if (err == null) "+8 oz logged" else "Couldn't log: $err"
+                                    if (err == null) { lastAction = ""; showLoggedSnackbar("+8 oz") } else lastAction = "Couldn't log: $err"
                                     refreshTotal()
+                                    WaterWidgetHelper.updateAll(this@MainActivity)
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(64.dp),
@@ -725,8 +861,9 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     scope.launch {
                                         val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 355)
-                                        lastAction = if (err == null) "+12 oz logged" else "Couldn't log: $err"
+                                        if (err == null) { lastAction = ""; showLoggedSnackbar("+12 oz") } else lastAction = "Couldn't log: $err"
                                         refreshTotal()
+                                        WaterWidgetHelper.updateAll(this@MainActivity)
                                     }
                                 },
                                 modifier = Modifier.weight(1f).height(56.dp),
@@ -737,26 +874,43 @@ class MainActivity : ComponentActivity() {
                                 onClick = {
                                     scope.launch {
                                         val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 473)
-                                        lastAction = if (err == null) "+16 oz logged" else "Couldn't log: $err"
+                                        if (err == null) { lastAction = ""; showLoggedSnackbar("+16 oz") } else lastAction = "Couldn't log: $err"
                                         refreshTotal()
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(56.dp),
-                                tonal = true,
-                                shape = RoundedCornerShape(0.dp)
-                            ) { Text("+16", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-                            PressButton(
-                                onClick = {
-                                    scope.launch {
-                                        val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
-                                        lastAction = if (undone) "Last phone add undone" else "Nothing to undo (Undo only covers phone adds, not watch taps)"
-                                        refreshTotal()
+                                        WaterWidgetHelper.updateAll(this@MainActivity)
                                     }
                                 },
                                 modifier = Modifier.weight(1f).height(56.dp),
                                 tonal = true,
                                 shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
-                            ) { Text("Undo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                            ) { Text("+16", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = customOzText,
+                                onValueChange = { customOzText = it.filter { ch -> ch.isDigit() } },
+                                label = { Text("Custom oz") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f)
+                            )
+                            PressButton(
+                                onClick = {
+                                    val customOz = customOzText.toIntOrNull()
+                                    if (customOz == null || customOz !in 1..100) {
+                                        lastAction = "Enter a custom amount between 1 and 100 oz"
+                                    } else {
+                                        val ml = (customOz * 29.5735).roundToInt()
+                                        scope.launch {
+                                            val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, ml)
+                                            if (err == null) { lastAction = ""; customOzText = ""; showLoggedSnackbar("+$customOz oz") } else lastAction = "Couldn't log: $err"
+                                            refreshTotal()
+                                            WaterWidgetHelper.updateAll(this@MainActivity)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.height(56.dp),
+                                tonal = true
+                            ) { Text("Add", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                         }
                         if (lastAction.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(16.dp))
@@ -898,6 +1052,7 @@ class MainActivity : ComponentActivity() {
                     label = "todayProgress"
                 )
 
+                val snackbarHostState = androidx.compose.runtime.remember { androidx.compose.material3.SnackbarHostState() }
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -968,7 +1123,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v11)",
+                                    "Water Logged 0.1.0 (v12)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -977,6 +1132,7 @@ class MainActivity : ComponentActivity() {
                     }
                 ) {
                     Scaffold(
+                        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
                         floatingActionButton = {
                             // Circular Material 3 floating menu button,
                             // bottom-left, opening the left drawer.
@@ -1031,14 +1187,14 @@ class MainActivity : ComponentActivity() {
                                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                                             ) {
                                                 androidx.compose.foundation.layout.Box(modifier = Modifier.weight(1f)) {
-                                                    TodayMainContent(scope, animatedProgress) { refreshTotal() }
+                                                    TodayMainContent(scope, animatedProgress, { refreshTotal() }, snackbarHostState)
                                                 }
                                                 androidx.compose.foundation.layout.Box(modifier = Modifier.weight(1f)) {
                                                     WeekPreviewContent()
                                                 }
                                             }
                                         } else {
-                                            TodayMainContent(scope, animatedProgress) { refreshTotal() }
+                                            TodayMainContent(scope, animatedProgress, { refreshTotal() }, snackbarHostState)
                                         }
                                     }
                     } else if (targetScreen == Screen.Settings) {
@@ -1239,7 +1395,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v11) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v12) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

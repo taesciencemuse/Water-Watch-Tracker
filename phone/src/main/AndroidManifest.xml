@@ -59,5 +59,23 @@
                     android:scheme="wear" />
             </intent-filter>
         </service>
+        <!-- Home screen widget (Glance, v12 item 8). -->
+        <receiver
+            android:name=".WaterWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/water_widget_info" />
+        </receiver>
+
+        <!-- Notification +8 action (v12 item 1). Not exported: only
+             this app's own PendingIntents can trigger it. -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
+
     </application>
 </manifest>

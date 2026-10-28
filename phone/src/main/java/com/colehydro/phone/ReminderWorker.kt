@@ -1,9 +1,7 @@
 package com.colehydro.phone
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import java.time.LocalTime
@@ -25,20 +23,20 @@ class ReminderWorker(appContext: Context, params: WorkerParameters) :
         val end = HealthConnectWriter.getReminderEndHour(ctx)
         if (hour < start || hour >= end) return Result.success()
 
+        // v12 item 2: don't nag once today's goal is already met.
+        // todayTotalMl returns 0 on a read failure, so a failed read
+        // does NOT suppress the reminder — it posts as before.
+        if (HealthConnectWriter.todayTotalMl(ctx) >= HealthConnectWriter.getGoalMl(ctx)) return Result.success()
+
         val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = NotificationChannel(
-            "water_reminders",
-            "Water reminders",
-            NotificationManager.IMPORTANCE_DEFAULT
+        manager.notify(
+            1001,
+            NotificationHelper.buildReminderNotification(
+                ctx, 1001,
+                "Time for water",
+                "Take a sip — you're working toward today's goal."
+            )
         )
-        manager.createNotificationChannel(channel)
-        val notification = NotificationCompat.Builder(ctx, "water_reminders")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Time for water")
-            .setContentText("Take a sip — you're working toward today's goal.")
-            .setAutoCancel(true)
-            .build()
-        manager.notify(1001, notification)
         return Result.success()
     }
 }

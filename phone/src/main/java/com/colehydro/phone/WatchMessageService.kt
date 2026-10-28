@@ -43,6 +43,7 @@ class WatchMessageService : WearableListenerService() {
                 HealthConnectWriter.writeTapIfNew(
                     applicationContext, tap.id, tap.ml, tap.timestampMillis
                 )
+                WaterWidgetHelper.updateAll(applicationContext)
             } catch (_: Exception) {
                 // Leave it: the watch queue will retry on next Tile open.
             }

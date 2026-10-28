@@ -12,7 +12,7 @@ android {
         applicationId = "com.colehydro.phone"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
+        versionCode = 12
         versionName = "0.1.0"
     }
 
@@ -44,6 +44,9 @@ dependencies {
 
     // Periodic reminders (WorkManager, no exact-alarm permission needed)
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // Home screen widget (Glance, v12 item 8)
+    implementation("androidx.glance:glance-appwidget:1.1.0")
 
     // Watch -> phone transport
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
