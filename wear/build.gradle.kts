@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.colehydro.wear"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.colehydro.wear"

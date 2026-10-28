@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.health.READ_HYDRATION" />
     <uses-permission android:name="android.permission.health.WRITE_HYDRATION" />
 
+    <!-- Package visibility for the Health Connect provider app (needed on
+         Android 13 and below; harmless on newer versions). -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
+
     <application
         android:label="Water (phone)"
         android:theme="@android:style/Theme.Material.Light">

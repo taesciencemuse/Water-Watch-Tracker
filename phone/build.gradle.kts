@@ -6,13 +6,13 @@ plugins {
 
 android {
     namespace = "com.colehydro.phone"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.colehydro.phone"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = 2
         versionName = "0.1.0"
     }
 
@@ -39,7 +39,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.0")
 
     // Health Connect (phone only — this is the writer)
-    implementation("androidx.health.connect:connect-client:1.1.0-alpha12")
+    implementation("androidx.health.connect:connect-client:1.1.0")
 
     // Watch -> phone transport
     implementation("com.google.android.gms:play-services-wearable:19.0.0")

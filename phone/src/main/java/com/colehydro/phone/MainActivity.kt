@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import kotlinx.coroutines.launch
 
@@ -148,6 +149,28 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text(
                             "Grant Health Connect access",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            status = when (HealthConnectClient.getSdkStatus(this@MainActivity)) {
+                                HealthConnectClient.SDK_AVAILABLE ->
+                                    "Health Connect SDK: available — permission request should show a screen"
+                                HealthConnectClient.SDK_UNAVAILABLE ->
+                                    "Health Connect SDK: unavailable on this device / Android version"
+                                HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
+                                    "Health Connect SDK: provider update required — update Health Connect in the Play Store, then try Grant again"
+                                else -> "Health Connect SDK: unknown status"
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text(
+                            "Check Health Connect status",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
