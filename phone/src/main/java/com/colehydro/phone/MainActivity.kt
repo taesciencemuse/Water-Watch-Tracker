@@ -1,12 +1,21 @@
 package com.colehydro.phone
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +31,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,9 +42,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.HealthConnectClient
@@ -72,25 +86,75 @@ class MainActivity : ComponentActivity() {
 
     private fun oz(ml: Int) = (ml / 29.5735).toInt()
 
+
+    /**
+     * Expressive press motion: a button that springs down slightly while
+     * pressed and bounces back on release, using expressive spring physics.
+     * The interaction source is shared with the button so the press state
+     * is real, not a timer.
+     */
+    @Composable
+    private fun PressButton(
+        onClick: () -> Unit,
+        modifier: Modifier,
+        tonal: Boolean,
+        content: @Composable RowScope.() -> Unit
+    ) {
+        val interaction = androidx.compose.runtime.remember { MutableInteractionSource() }
+        val pressed by interaction.collectIsPressedAsState()
+        val scale by animateFloatAsState(
+            targetValue = if (pressed) 0.93f else 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow
+            ),
+            label = "pressScale"
+        )
+        val scaled = modifier.graphicsLayer { scaleX = scale; scaleY = scale }
+        if (tonal) {
+            FilledTonalButton(
+                onClick = onClick,
+                modifier = scaled,
+                interactionSource = interaction,
+                shape = MaterialTheme.shapes.extraLarge,
+                content = content
+            )
+        } else {
+            Button(
+                onClick = onClick,
+                modifier = scaled,
+                interactionSource = interaction,
+                shape = MaterialTheme.shapes.extraLarge,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ),
+                content = content
+            )
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+            // Material 3 Expressive on stable material3 1.3.0: the
+            // MaterialExpressiveTheme / MotionScheme / expressive scheme
+            // APIs are internal in this stable release (they only exist
+            // in alpha builds), so the robust version is: system dynamic
+            // color + expressive shapes + expressive spring motion done
+            // explicitly below (PressButton, animated progress), on the
+            // stable theme. No alpha dependency.
+            val darkTheme = isSystemInDarkTheme()
+            val colorScheme = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme ->
+                    dynamicDarkColorScheme(LocalContext.current)
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+                    dynamicLightColorScheme(LocalContext.current)
+                darkTheme -> darkColorScheme()
+                else -> lightColorScheme()
+            }
             MaterialTheme(
-                colorScheme = lightColorScheme(
-                    primary = Color(0xFF0B6FA4),
-                    onPrimary = Color(0xFFFFFFFF),
-                    primaryContainer = Color(0xFFC6E7FF),
-                    onPrimaryContainer = Color(0xFF00344D),
-                    secondary = Color(0xFF0E7C6B),
-                    secondaryContainer = Color(0xFFBFEDE3),
-                    onSecondaryContainer = Color(0xFF00382F),
-                    background = Color(0xFFF2F8FB),
-                    onBackground = Color(0xFF0B1D29),
-                    surface = Color(0xFFFFFFFF),
-                    onSurface = Color(0xFF0B1D29),
-                    surfaceVariant = Color(0xFFDCEBF3),
-                    onSurfaceVariant = Color(0xFF3E5A6B)
-                ),
+                colorScheme = colorScheme,
                 shapes = Shapes(
                     extraSmall = RoundedCornerShape(12.dp),
                     small = RoundedCornerShape(16.dp),
@@ -100,6 +164,13 @@ class MainActivity : ComponentActivity() {
                 )
             ) {
                 val scope = rememberCoroutineScope()
+
+                // System back gesture / back button on the Settings screen
+                // must return to Main, not exit the app: the two screens
+                // are internal Compose state, not Android back-stack entries.
+                if (screen == Screen.Settings) {
+                    BackHandler { screen = Screen.Main }
+                }
 
                 fun refreshTotal() {
                     scope.launch {
@@ -118,6 +189,17 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(screen) { refreshTotal() }
+
+                // Expressive motion: total/progress spring to the new
+                // value instead of jumping, using expressive spring physics.
+                val animatedProgress by animateFloatAsState(
+                    targetValue = ((totalMl?.toFloat() ?: 0f) / 1893f).coerceIn(0f, 1f),
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "todayProgress"
+                )
 
                 Column(
                     modifier = Modifier
@@ -177,27 +259,23 @@ class MainActivity : ComponentActivity() {
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
                                     LinearProgressIndicator(
-                                        progress = { (totalMl!!.toFloat() / 1893f).coerceIn(0f, 1f) },
+                                        progress = { animatedProgress },
                                         modifier = Modifier.fillMaxWidth().height(12.dp),
                                     )
                                 }
                             }
                         }
                         Spacer(modifier = Modifier.height(24.dp))
-                        Button(
+                        PressButton(
                             onClick = {
                                 scope.launch {
-                                    val ok = HealthConnectWriter.writeManualMl(this@MainActivity, 237)
-                                    lastAction = if (ok) "+8 oz logged" else "Couldn't log — check Health Connect permission in Settings"
+                                    val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 237)
+                                    lastAction = if (err == null) "+8 oz logged" else "Couldn't log: $err"
                                     refreshTotal()
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(64.dp),
-                            shape = MaterialTheme.shapes.extraLarge,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
+                            tonal = false
                         ) {
                             Text(
                                 "+8 oz",
@@ -210,27 +288,27 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            FilledTonalButton(
+                            PressButton(
                                 onClick = {
                                     scope.launch {
-                                        val ok = HealthConnectWriter.writeManualMl(this@MainActivity, 355)
-                                        lastAction = if (ok) "+12 oz logged" else "Couldn't log — check Health Connect permission in Settings"
+                                        val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 355)
+                                        lastAction = if (err == null) "+12 oz logged" else "Couldn't log: $err"
                                         refreshTotal()
                                     }
                                 },
                                 modifier = Modifier.weight(1f).height(56.dp),
-                                shape = MaterialTheme.shapes.extraLarge
+                                tonal = true
                             ) { Text("+12", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-                            FilledTonalButton(
+                            PressButton(
                                 onClick = {
                                     scope.launch {
-                                        val ok = HealthConnectWriter.writeManualMl(this@MainActivity, 473)
-                                        lastAction = if (ok) "+16 oz logged" else "Couldn't log — check Health Connect permission in Settings"
+                                        val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 473)
+                                        lastAction = if (err == null) "+16 oz logged" else "Couldn't log: $err"
                                         refreshTotal()
                                     }
                                 },
                                 modifier = Modifier.weight(1f).height(56.dp),
-                                shape = MaterialTheme.shapes.extraLarge
+                                tonal = true
                             ) { Text("+16", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                             FilledTonalButton(
                                 onClick = {
@@ -395,7 +473,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water (phone) 0.1.0 (v5) • Health Connect client 1.1.0",
+                            "Water (phone) 0.1.0 (v7) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -2,9 +2,11 @@ package com.colehydro.phone
 
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.records.metadata.Device
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.HydrationRecord
 import androidx.health.connect.client.records.metadata.Metadata
+import android.health.connect.HealthConnectException
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.health.connect.client.units.Volume
 import androidx.health.connect.client.aggregate.AggregateMetric
@@ -43,18 +45,21 @@ object HealthConnectWriter {
      * its record id so the next Undo can delete exactly that record.
      * Returns false if the write failed (e.g. permission not granted).
      */
-    suspend fun writeManualMl(context: Context, ml: Int): Boolean {
+    /** Returns null on success, or the exact exception message on failure. */
+    suspend fun writeManualMlResult(context: Context, ml: Int): String? {
         return try {
             val client = HealthConnectClient.getOrCreate(context)
-            val instant = Instant.now()
-            val zone = ZoneId.systemDefault().rules.getOffset(instant)
+            val endInstant = Instant.now()
+            val startInstant = endInstant.minusSeconds(1)
+            val startZone = ZoneId.systemDefault().rules.getOffset(startInstant)
+            val endZone = ZoneId.systemDefault().rules.getOffset(endInstant)
             val response = client.insertRecords(
                 listOf(
                     HydrationRecord(
-                        startTime = instant,
-                        startZoneOffset = zone,
-                        endTime = instant,
-                        endZoneOffset = zone,
+                        startTime = startInstant,
+                        startZoneOffset = startZone,
+                        endTime = endInstant,
+                        endZoneOffset = endZone,
                         volume = Volume.milliliters(ml.toDouble()),
                         metadata = Metadata.manualEntry()
                     )
@@ -65,10 +70,16 @@ object HealthConnectWriter {
                 context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
                     .edit().putString("last_phone_record_id", id).apply()
             }
-            true
-        } catch (_: Exception) {
-            false
+            null
+        } catch (e: Exception) {
+            val code = (e as? HealthConnectException)?.errorCode
+            if (code != null) "${e.javaClass.simpleName} (errorCode=$code): ${e.message}"
+            else "${e.javaClass.simpleName}: ${e.message}"
         }
+    }
+
+    suspend fun writeManualMl(context: Context, ml: Int): Boolean {
+        return writeManualMlResult(context, ml) == null
     }
 
     /** Deletes the most recent phone manual add, if there is one. */
@@ -99,17 +110,28 @@ object HealthConnectWriter {
         if (prefs.getBoolean(tapId, false)) return false // already written
 
         val client = HealthConnectClient.getOrCreate(context)
-        val instant = Instant.ofEpochMilli(timestampMillis)
-        val zone = ZoneId.systemDefault().rules.getOffset(instant)
+        val endInstant = Instant.ofEpochMilli(timestampMillis)
+        // HydrationRecord is an interval record: a zero-length interval
+        // (start == end) is rejected by Health Connect validation, so
+        // the drink spans the 1 second ending at the tap time.
+        val startInstant = endInstant.minusSeconds(1)
+        val startZone = ZoneId.systemDefault().rules.getOffset(startInstant)
+        val endZone = ZoneId.systemDefault().rules.getOffset(endInstant)
         client.insertRecords(
             listOf(
                 HydrationRecord(
-                    startTime = instant,
-                    startZoneOffset = zone,
-                    endTime = instant,
-                    endZoneOffset = zone,
+                    startTime = startInstant,
+                    startZoneOffset = startZone,
+                    endTime = endInstant,
+                    endZoneOffset = endZone,
                     volume = Volume.milliliters(ml.toDouble()),
-                    metadata = Metadata.manualEntry()
+                    // Watch tap: actively recorded on a watch, with the
+                    // tap UUID as clientRecordId so Health Connect itself
+                    // dedupes a retried tap, not just our seen-list.
+                    metadata = Metadata.activelyRecorded(
+                        device = Device(type = Device.TYPE_WATCH),
+                        clientRecordId = tapId
+                    )
                 )
             )
         )
