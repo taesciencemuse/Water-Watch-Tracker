@@ -29,6 +29,19 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
+        <!-- GOAL SYNC: receives /hydro/goal messages from the phone. -->
+        <service
+            android:name=".GoalMessageService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/hydro/goal"
+                    android:scheme="wear" />
+            </intent-filter>
+        </service>
+
         <!-- COMPLICATION: glance on the watch face. -->
         <service
             android:name=".HydrationComplicationService"

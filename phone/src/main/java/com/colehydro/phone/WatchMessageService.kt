@@ -39,6 +39,7 @@ class WatchMessageService : WearableListenerService() {
         }
         scope.launch {
             try {
+                HealthConnectWriter.saveLastWatchTap(applicationContext, tap.ml, tap.timestampMillis)
                 HealthConnectWriter.writeTapIfNew(
                     applicationContext, tap.id, tap.ml, tap.timestampMillis
                 )

@@ -10,9 +10,11 @@ import android.health.connect.HealthConnectException
 import androidx.health.connect.client.time.TimeRangeFilter
 import androidx.health.connect.client.units.Volume
 import androidx.health.connect.client.aggregate.AggregateMetric
+import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.request.AggregateRequest
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 
 /**
@@ -139,6 +141,18 @@ object HealthConnectWriter {
         return true
     }
 
+    /** Daily goal, stored locally in this app only — Health Connect
+     *  has no hydration-goal API to pull a goal from. */
+    fun getGoalMl(context: Context): Int {
+        return context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
+            .getInt("goal_ml", 1893)
+    }
+
+    fun setGoalMl(context: Context, ml: Int) {
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
+            .edit().putInt("goal_ml", ml).apply()
+    }
+
     suspend fun todayTotalMl(context: Context): Int {
         return try {
             val client = HealthConnectClient.getOrCreate(context)
@@ -155,5 +169,96 @@ object HealthConnectWriter {
         } catch (_: Exception) {
             0
         }
+    }
+
+    data class HydrationEntry(val timeMillis: Long, val ml: Int)
+
+    suspend fun readHydrationEntries(context: Context, start: Instant, end: Instant): List<HydrationEntry> {
+        return try {
+            val client = HealthConnectClient.getOrCreate(context)
+            val response = client.readRecords(
+                ReadRecordsRequest(
+                    HydrationRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(start, end)
+                )
+            )
+            response.records.map {
+                HydrationEntry(it.endTime.toEpochMilli(), it.volume.inMilliliters.toInt())
+            }.sortedBy { it.timeMillis }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Daily totals for [startDate]..[endDate] inclusive, in system zone. */
+    suspend fun dailyTotals(context: Context, startDate: LocalDate, endDate: LocalDate): List<Pair<LocalDate, Int>> {
+        val zone = ZoneId.systemDefault()
+        val start = startDate.atStartOfDay(zone).toInstant()
+        val end = endDate.plusDays(1).atStartOfDay(zone).toInstant()
+        val entries = readHydrationEntries(context, start, end)
+        val byDay = entries.groupBy {
+            Instant.ofEpochMilli(it.timeMillis).atZone(zone).toLocalDate()
+        }.mapValues { (_, list) -> list.sumOf { it.ml } }
+        val out = mutableListOf<Pair<LocalDate, Int>>()
+        var d = startDate
+        while (!d.isAfter(endDate)) {
+            out.add(d to (byDay[d] ?: 0))
+            d = d.plusDays(1)
+        }
+        return out
+    }
+
+    /** Monthly totals for the given months, oldest first. */
+    suspend fun monthlyTotals(context: Context, months: List<YearMonth>): List<Pair<YearMonth, Int>> {
+        if (months.isEmpty()) return emptyList()
+        val zone = ZoneId.systemDefault()
+        val start = months.first().atDay(1).atStartOfDay(zone).toInstant()
+        val end = months.last().plusMonths(1).atDay(1).atStartOfDay(zone).toInstant()
+        val entries = readHydrationEntries(context, start, end)
+        val byMonth = entries.groupBy {
+            val ld = Instant.ofEpochMilli(it.timeMillis).atZone(zone).toLocalDate()
+            YearMonth.of(ld.year, ld.month)
+        }.mapValues { (_, list) -> list.sumOf { it.ml } }
+        return months.map { it to (byMonth[it] ?: 0) }
+    }
+
+    // --- Watch: last tap received from the watch, for the Watch tab ---
+    fun saveLastWatchTap(context: Context, ml: Int, timeMillis: Long) {
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).edit()
+            .putLong("last_watch_tap_millis", timeMillis)
+            .putInt("last_watch_tap_ml", ml).apply()
+    }
+
+    fun getLastWatchTap(context: Context): Pair<Long, Int>? {
+        val prefs = context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
+        val millis = prefs.getLong("last_watch_tap_millis", 0L)
+        return if (millis == 0L) null else millis to prefs.getInt("last_watch_tap_ml", 0)
+    }
+
+    // --- Reminders: stored prefs only; scheduling lives in ReminderWorker ---
+    fun getRemindersEnabled(context: Context): Boolean =
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).getBoolean("reminders_enabled", false)
+
+    fun setRemindersEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).edit().putBoolean("reminders_enabled", enabled).apply()
+    }
+
+    fun getReminderIntervalMinutes(context: Context): Int =
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).getInt("reminder_interval_minutes", 60)
+
+    fun setReminderIntervalMinutes(context: Context, minutes: Int) {
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).edit().putInt("reminder_interval_minutes", minutes).apply()
+    }
+
+    fun getReminderStartHour(context: Context): Int =
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).getInt("reminder_start_hour", 8)
+
+    fun getReminderEndHour(context: Context): Int =
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).getInt("reminder_end_hour", 20)
+
+    fun setReminderWindow(context: Context, startHour: Int, endHour: Int) {
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE).edit()
+            .putInt("reminder_start_hour", startHour)
+            .putInt("reminder_end_hour", endHour).apply()
     }
 }

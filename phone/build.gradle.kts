@@ -12,7 +12,7 @@ android {
         applicationId = "com.colehydro.phone"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
+        versionCode = 9
         versionName = "0.1.0"
     }
 
@@ -36,10 +36,14 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.compose.ui:ui:1.7.0")
     implementation("androidx.compose.material3:material3:1.3.0")
+    implementation("androidx.compose.material:material-icons-extended:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.0")
 
     // Health Connect (phone only — this is the writer)
     implementation("androidx.health.connect:connect-client:1.1.0")
+
+    // Periodic reminders (WorkManager, no exact-alarm permission needed)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     // Watch -> phone transport
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
