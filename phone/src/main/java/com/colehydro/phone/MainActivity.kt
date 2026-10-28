@@ -252,6 +252,21 @@ class MainActivity : ComponentActivity() {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        // Prominent Settings entry point (in addition to the
+                        // top-right text button): plain text up top was too
+                        // easy to miss on v4.
+                        Spacer(modifier = Modifier.height(24.dp))
+                        FilledTonalButton(
+                            onClick = { screen = Screen.Settings },
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            shape = MaterialTheme.shapes.extraLarge
+                        ) {
+                            Text(
+                                "Settings",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     } else {
                         // ---- Settings screen ----
                         Row(
@@ -380,7 +395,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water (phone) 0.1.0 (v4) • Health Connect client 1.1.0",
+                            "Water (phone) 0.1.0 (v5) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
