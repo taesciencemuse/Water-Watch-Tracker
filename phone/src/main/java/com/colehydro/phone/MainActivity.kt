@@ -378,6 +378,7 @@ class MainActivity : ComponentActivity() {
                 },
                 label = "historyTab"
             ) { tabState ->
+            Column(modifier = Modifier.fillMaxWidth()) {
             when (tabState) {
                 0 -> {
                     // Hourly bars: 24 hours, label every 3 hours
@@ -436,6 +437,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
             }
             }
             Spacer(modifier = Modifier.height(88.dp))
@@ -619,6 +621,28 @@ class MainActivity : ComponentActivity() {
                             // drawn behind the card content. Height follows
                             // the spring-animated progress; amplitude is small
                             // so it reads as texture, not decoration.
+                            // Idle wave: a slow, continuous phase drift (one full
+                            // cycle every 6 seconds, linear, restarting) on top of
+                            // the progress-tied phase, so the wave gently rolls
+                            // even when no taps are happening. Uses an Animatable
+                            // loop instead of InfiniteTransition, whose
+                            // animateFloat extension needs an extra import and
+                            // failed to resolve in the first attempt. Compose
+                            // cancels the loop when the app is backgrounded.
+                            val idlePhaseAnim = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(0f) }
+                            androidx.compose.runtime.LaunchedEffect(Unit) {
+                                while (true) {
+                                    idlePhaseAnim.animateTo(
+                                        (2f * Math.PI.toFloat()),
+                                        animationSpec = androidx.compose.animation.core.tween<Float>(
+                                            durationMillis = 6000,
+                                            easing = androidx.compose.animation.core.LinearEasing
+                                        )
+                                    )
+                                    idlePhaseAnim.snapTo(0f)
+                                }
+                            }
+                            val idleWavePhase = idlePhaseAnim.value
                             androidx.compose.foundation.layout.Box {
                                 val waveColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                                 Canvas(modifier = Modifier.matchParentSize()) {
@@ -629,7 +653,7 @@ class MainActivity : ComponentActivity() {
                                         moveTo(0f, waveTop)
                                         var x = 0f
                                         while (x <= size.width) {
-                                            val y = waveTop + kotlin.math.sin(x / size.width * 2f * Math.PI.toFloat() * 2f + progress * 2f) * amplitude
+                                            val y = waveTop + kotlin.math.sin(x / size.width * 2f * Math.PI.toFloat() * 2f + progress * 2f + idleWavePhase) * amplitude
                                             lineTo(x, y)
                                             x += 8f
                                         }
@@ -944,7 +968,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v10)",
+                                    "Water Logged 0.1.0 (v11)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1215,7 +1239,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v10) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v11) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
