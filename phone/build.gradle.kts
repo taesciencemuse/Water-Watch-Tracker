@@ -5,6 +5,22 @@ plugins {
 }
 
 android {
+    // Persistent debug signing (v12 lesson): AGP's default debug
+    // keystore lives in ~/.android, which does not survive VM
+    // replacements here, so each fresh keystore broke updates with a
+    // signature mismatch (v11 cert 9d01… vs v12 cert dc9d…). If a
+    // debug.keystore exists at the project root, pin to it; otherwise
+    // fall back to the default, so a fresh clone still builds.
+    if (file("../debug.keystore").exists()) {
+        signingConfigs {
+            create("persistentDebug") {
+                storeFile = file("../debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
     namespace = "com.colehydro.phone"
     compileSdk = 36
 
@@ -22,6 +38,14 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.7.8"
     }
+    buildTypes {
+        getByName("debug") {
+            if (file("../debug.keystore").exists()) {
+                signingConfig = signingConfigs.getByName("persistentDebug")
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
