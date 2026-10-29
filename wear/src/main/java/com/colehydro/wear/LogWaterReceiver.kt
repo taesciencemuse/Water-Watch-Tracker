@@ -29,6 +29,12 @@ class LogWaterReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_LOG_DEFAULT) return
+        // Immediate Toast: proves the broadcast fired at all, even
+        // if addTap then fails (Oct 28: complication tap showed
+        // nothing at all in v16, so firing vs failing was unclear).
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try { Toast.makeText(context, "Logging…", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
+        }
         val pending = goAsync()
         scope.launch {
             try {
@@ -54,9 +60,9 @@ class LogWaterReceiver : BroadcastReceiver() {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     try { Toast.makeText(context, "+${mlToOz(defaultMl)} oz logged", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    try { Toast.makeText(context, "Couldn't log — try again", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
+                    try { Toast.makeText(context, "Couldn't log: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
                 }
             } finally {
                 pending.finish()

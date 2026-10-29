@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.time.LocalDate
 import kotlin.math.roundToInt
+import androidx.datastore.preferences.core.Preferences
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -44,12 +46,26 @@ object WaterPrefs {
     val HC_TOTAL_DATE = stringPreferencesKey("hc_total_date")
 }
 
-class WaterRepository(private val context: Context) {
+class WaterRepository(context: Context) {
+    // Use applicationContext for DataStore: Activity, Service,
+    // Receiver and Tile contexts otherwise each get their own
+    // DataStore instance for the same "water" file, which is a
+    // known source of concurrent-access failures on addTap
+    // (Oct 28: Wear tap "Couldn't log", complication silent).
+    private val context: Context = context.applicationContext
 
     companion object {
         const val DEFAULT_TAP_ML = 237 // 8 oz
         const val DEFAULT_GOAL_ML = 1893 // 64 oz
     }
+
+    /** Raw DataStore flow, for live UI updates: when
+     *  GoalMessageService writes a new HC total / goal / default
+     *  from the phone, collectors see it immediately, even if the
+     *  Wear app is open in the foreground (Oct 28 live-update
+     *  request — previously refresh only ran on first composition
+     *  and ON_RESUME, so a foreground app stayed stale). */
+    fun prefsFlow(): Flow<Preferences> = context.dataStore.data
 
     private fun today(): String = LocalDate.now().toString()
 

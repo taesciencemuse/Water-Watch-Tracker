@@ -7,6 +7,8 @@ import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.protolayout.material.Text
+import androidx.wear.protolayout.material.Button
+import androidx.wear.protolayout.material.ButtonDefaults
 import androidx.wear.protolayout.ColorBuilders
 import androidx.wear.protolayout.material.layouts.PrimaryLayout
 import androidx.wear.tiles.RequestBuilders
@@ -50,6 +52,7 @@ class WaterTileService : TileService() {
         // Log BEFORE snapshotting, so the returned tile shows the
         // new total. Unknown / empty ids mean a normal refresh.
         val clicked = try { requestParams.currentState?.lastClickableId } catch (_: Exception) { null }
+        var tileError: String? = null
         if (clicked == "add_default" || clicked == "add_12" || clicked == "add_16") {
             vibrateClick(this@WaterTileService)
             val ( _, _, defaultMl0) = repo.snapshot()
@@ -63,8 +66,15 @@ class WaterTileService : TileService() {
                 ml = ml,
                 timestampMillis = System.currentTimeMillis()
             )
-            repo.addTap(tap)
-            if (SyncSender.sendTap(this@WaterTileService, tap)) repo.markSynced(setOf(tap.id))
+            try {
+                repo.addTap(tap)
+            } catch (e: Exception) {
+                // Tile taps previously blinked but did nothing, with
+                // no visible feedback (Oct 28). Show the failure in
+                // the footer so a failed tap is visible, not silent.
+                tileError = "Couldn't log: ${e.javaClass.simpleName}"
+            }
+            if (tileError == null && SyncSender.sendTap(this@WaterTileService, tap)) repo.markSynced(setOf(tap.id))
             try {
                 androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester.create(
                     this@WaterTileService,
@@ -73,9 +83,11 @@ class WaterTileService : TileService() {
             } catch (_: Exception) { }
         } else if (clicked == "undo") {
             vibrateClick(this@WaterTileService)
-            // undoLastTap returns null when already synced / nothing
-            // to undo, so the total is NOT dropped in those cases.
-            repo.undoLastTap()
+            try {
+                repo.undoLastTap()
+            } catch (e: Exception) {
+                tileError = "Couldn't undo: ${e.javaClass.simpleName}"
+            }
         }
         // Try to flush anything queued while the phone was away.
         scope.launch { SyncSender.flushPending(this@WaterTileService, repo) }
@@ -95,19 +107,21 @@ class WaterTileService : TileService() {
                             .build()
                     )
                     .addContent(
-                        bigButton("add_default", "+$defaultOz oz", defaultMl)
+                        bigButton("add_default", "+$defaultOz", defaultMl)
                     )
                     .addContent(
                         LayoutElementBuilders.Row.Builder()
-                            .addContent(smallButton("add_12", "+12 oz", ozToMl(12)))
-                            .addContent(smallButton("add_16", "+16 oz", ozToMl(16)))
+                            .addContent(smallButton("add_12", "+12", ozToMl(12)))
+                            .addContent(spacer(8))
+                            .addContent(smallButton("add_16", "+16", ozToMl(16)))
+                            .addContent(spacer(8))
                             .addContent(smallButton("undo", "Undo", -1))
                             .build()
                     )
                     .addContent(
                         Text.Builder(
                             this@WaterTileService,
-                            if (pending == 0) "Synced" else "$pending pending — phone away"
+                            tileError ?: if (pending == 0) "Synced" else "$pending pending — phone away"
                         ).setColor(white()).build()
                     )
                     .build()
@@ -143,34 +157,42 @@ class WaterTileService : TileService() {
     private fun white() =
         ColorBuilders.ColorProp.Builder().setArgb(0xFFFFFFFF.toInt()).build()
 
+    private fun spacer(widthDp: Int) =
+        LayoutElementBuilders.Spacer.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(widthDp.toFloat()))
+            .build()
+
+    // Material-themed buttons (Oct 28, Cole): previously these were
+    // plain Box+Text, so the Tile looked like plain text with no
+    // buttons at all, and "+12 oz / +16 oz" overflowed to "+12 oz+16...".
+    // ButtonDefaults.PRIMARY/SECONDARY_COLORS follow the watch's
+    // system Material theme, so the buttons match the watch colour.
+    // Short labels fit the circular buttons; the total above already
+    // shows the "oz" unit.
     private fun bigButton(id: String, label: String, ml: Int) =
-        LayoutElementBuilders.Box.Builder()
-            .setModifiers(
-                ModifiersBuilders.Modifiers.Builder()
-                    .setClickable(
-                        ModifiersBuilders.Clickable.Builder()
-                            .setId(id)
-                            .setOnClick(launchAdd(ml))
-                            .build()
-                    )
-                    .build()
-            )
-            .addContent(Text.Builder(this, label).setColor(white()).build())
+        Button.Builder(
+            this,
+            ModifiersBuilders.Clickable.Builder()
+                .setId(id)
+                .setOnClick(launchAdd(ml))
+                .build()
+        )
+            .setTextContent(label)
+            .setButtonColors(ButtonDefaults.PRIMARY_COLORS)
+            .setSize(ButtonDefaults.LARGE_SIZE)
             .build()
 
     private fun smallButton(id: String, label: String, ml: Int) =
-        LayoutElementBuilders.Box.Builder()
-            .setModifiers(
-                ModifiersBuilders.Modifiers.Builder()
-                    .setClickable(
-                        ModifiersBuilders.Clickable.Builder()
-                            .setId(id)
-                            .setOnClick(launchAdd(ml))
-                            .build()
-                    )
-                    .build()
-            )
-            .addContent(Text.Builder(this, label).setColor(white()).build())
+        Button.Builder(
+            this,
+            ModifiersBuilders.Clickable.Builder()
+                .setId(id)
+                .setOnClick(launchAdd(ml))
+                .build()
+        )
+            .setTextContent(label)
+            .setButtonColors(ButtonDefaults.SECONDARY_COLORS)
+            .setSize(ButtonDefaults.DEFAULT_SIZE)
             .build()
 
     private fun launchAdd(ml: Int): ActionBuilders.LoadAction {

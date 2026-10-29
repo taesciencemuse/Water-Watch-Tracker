@@ -60,7 +60,7 @@
         <!-- COMPLICATION DIRECT LOG (v13, item 6): tap -> broadcast, no activity. -->
         <receiver
             android:name=".LogWaterReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.colehydro.wear.ACTION_LOG_DEFAULT" />
             </intent-filter>

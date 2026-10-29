@@ -106,15 +106,47 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val pending = goAsync()
         scope.launch {
             try {
-                val wrote = HealthConnectWriter.writeManualMl(context, 237)
-                if (wrote) {
+                // Use the result version so a failed write is visible,
+                // not swallowed: previously writeManualMl() returned
+                // false on failure, the receiver cancelled the
+                // notification anyway, and nothing updated anywhere —
+                // exactly the Oct 28 "reminder +8 did nothing" report.
+                val err = HealthConnectWriter.writeManualMlResult(context, 237)
+                if (err == null) {
                     vibrateClick(context)
+                    // Success feedback (v17, Oct 28): previously a
+                    // successful +8 gave no immediate feedback at all,
+                    // so success and failure looked identical until
+                    // totals were checked later.
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        try { android.widget.Toast.makeText(context, "+8 oz logged", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
+                    }
                     HealthConnectWriter.addToCachedTotalMl(context, 237)
+                    // Watch sync was missing entirely: the phone total
+                    // only reached the watch when the phone app was
+                    // next opened and refreshTotal() ran, so a
+                    // notification +8 looked like nothing happened
+                    // on the watch. Send the new total now.
+                    val newTotal = HealthConnectWriter.todayTotalMlOrNull(context)
+                        ?: HealthConnectWriter.getCachedTotalMl(context)
+                    sendTotalToWatch(context, newTotal)
+                    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.cancel(notificationId)
+                    WaterWidgetHelper.updateAll(context)
+                } else {
+                    android.util.Log.e("NotificationAction", "reminder +8 failed: $err")
+                    // Don't cancel on failure: keep the notification
+                    // so the user can retry or open the app, and show
+                    // a Toast so the failure is visible, not silent.
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        try { android.widget.Toast.makeText(context, "Couldn't log — open app to try again", android.widget.Toast.LENGTH_LONG).show() } catch (_: Exception) { }
+                    }
                 }
-                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.cancel(notificationId)
-                WaterWidgetHelper.updateAll(context)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("NotificationAction", "reminder +8 failed", e)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try { android.widget.Toast.makeText(context, "Couldn't log — open app to try again", android.widget.Toast.LENGTH_LONG).show() } catch (_: Exception) { }
+                }
             } finally {
                 pending.finish()
             }

@@ -13,6 +13,13 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -183,6 +190,10 @@ fun ExpressiveButton(
             .graphicsLayer(scaleX = scale, scaleY = scale),
         interactionSource = interactionSource,
         shape = morphedShape,
+        // Default Button padding (24dp sides) is wider than a
+        // ~59dp watch button, so "+12" wrapped and clipped to
+        // "+" + a dash, and "Undo" clipped to "U" (Oct 28 photos).
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
         colors = if (tonal) {
             ButtonDefaults.filledTonalButtonColors()
         } else {
@@ -204,6 +215,9 @@ fun WaterScreen(
     onLogged: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
+    val focusRequester = remember { FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { focusRequester.requestFocus() }
     var todayMl by remember { mutableStateOf(0) }
     var goalMl by remember { mutableStateOf(WaterRepository.DEFAULT_GOAL_ML) }
     var defaultMl by remember { mutableStateOf(WaterRepository.DEFAULT_TAP_ML) }
@@ -241,6 +255,17 @@ fun WaterScreen(
         refresh()
     }
 
+    // Live update (v17, Oct 28): collect the DataStore flow,
+    // so a phone add / goal / clear that arrives while this
+    // screen is open in the foreground updates the numbers
+    // immediately, not just on the next resume. GoalMessageService
+    // writes to this same DataStore, so its writes are the trigger.
+    // refresh() itself only reads (except a one-time day-rollover
+    // edit), so this settles instead of looping.
+    LaunchedEffect(Unit) {
+        repo.prefsFlow().collect { refresh() }
+    }
+
     // Refresh on every resume, not just first composition: phone
     // adds / clears that arrive while this screen is already open
     // otherwise only show after several opens/closes (Oct 28 test 4).
@@ -264,11 +289,12 @@ fun WaterScreen(
                 repo.addTap(tap)
                 if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id))
                 justAdded = "+${mlToOz(ml)} oz logged"
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Never crash the app on a tap: show the failure
                 // instead, so the next report says "couldn't log"
-                // rather than "app just closes".
-                justAdded = "Couldn't log — try again"
+                // rather than "app just closes". Show the exception
+                // class so the root cause is visible on the watch.
+                justAdded = "Couldn't log: ${e.javaClass.simpleName}"
             }
             try { refresh() } catch (_: Exception) { }
             try { onLogged() } catch (_: Exception) { }
@@ -288,8 +314,14 @@ fun WaterScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .verticalScroll(scrollState)
+                .rotaryScrollable(
+                    RotaryScrollableDefaults.behavior(scrollState),
+                    focusRequester
+                )
+                .focusRequester(focusRequester)
+                .focusable()
+                .padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Top
         ) {
@@ -372,42 +404,33 @@ fun WaterScreen(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ExpressiveButton(
-                    onClick = { vibrateClick(context); log(ozToMl(12)) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    tonal = true
-                ) { Text("+12", style = MaterialTheme.typography.titleMedium) }
-                ExpressiveButton(
-                    onClick = { vibrateClick(context); log(ozToMl(16)) },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    tonal = true
-                ) { Text("+16", style = MaterialTheme.typography.titleMedium) }
-                ExpressiveButton(
-                    onClick = {
-                        vibrateClick(context)
-                        scope.launch {
-                            when (repo.undoLastTapResult()) {
-                                WaterRepository.UndoResult.PendingRemoved -> justAdded = "Undid last drink"
-                                WaterRepository.UndoResult.AlreadySynced -> justAdded = "Already synced — undo from phone"
-                                WaterRepository.UndoResult.NothingToUndo -> justAdded = "Nothing to undo"
-                            }
-                            refresh(); onLogged()
-                        }
-                    },
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    tonal = true
-                ) { Text("Undo", style = MaterialTheme.typography.titleMedium) }
-            }
+            ExpressiveButton(
+                onClick = { vibrateClick(context); log(ozToMl(12)) },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                tonal = true
+            ) { Text("+12 oz", style = MaterialTheme.typography.titleMedium) }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "Default and goal are changed on the phone for v1.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            ExpressiveButton(
+                onClick = { vibrateClick(context); log(ozToMl(16)) },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                tonal = true
+            ) { Text("+16 oz", style = MaterialTheme.typography.titleMedium) }
+            Spacer(modifier = Modifier.height(8.dp))
+            ExpressiveButton(
+                onClick = {
+                    vibrateClick(context)
+                    scope.launch {
+                        when (repo.undoLastTapResult()) {
+                            WaterRepository.UndoResult.PendingRemoved -> justAdded = "Undid last drink"
+                            WaterRepository.UndoResult.AlreadySynced -> justAdded = "Already synced — undo from phone"
+                            WaterRepository.UndoResult.NothingToUndo -> justAdded = "Nothing to undo"
+                        }
+                        refresh(); onLogged()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                tonal = true
+            ) { Text("Undo", style = MaterialTheme.typography.titleMedium) }
         }
     }
 }

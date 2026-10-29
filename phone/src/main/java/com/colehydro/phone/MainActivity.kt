@@ -994,18 +994,6 @@ class MainActivity : ComponentActivity() {
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        if (hasUndo) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(onClick = {
-                                vibrateClick(this@MainActivity)
-                                scope.launch {
-                                    val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
-                                    lastAction = if (undone) "" else "Couldn't undo — try again"
-                                    hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
-                                    refreshTotal()
-                                }
-                            }) { Text("Undo last phone add") }
-                        }
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1068,6 +1056,21 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.height(56.dp),
                                 tonal = true
                             ) { Text("Add", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                        }
+                        // Undo last phone add: moved below the manual
+                        // entry (v17, per Cole Oct 28) — bottom of the
+                        // surrounding buttons, not between +8 and +12/+16.
+                        if (hasUndo) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            TextButton(onClick = {
+                                vibrateClick(this@MainActivity)
+                                scope.launch {
+                                    val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
+                                    lastAction = if (undone) "" else "Couldn't undo — try again"
+                                    hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
+                                    refreshTotal()
+                                }
+                            }) { Text("Undo last phone add") }
                         }
                         if (lastAction.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(16.dp))
@@ -1352,7 +1355,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v16)",
+                                    "Water Logged 0.1.0 (v17)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1654,7 +1657,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v16) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v17) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
