@@ -10,7 +10,6 @@ import androidx.wear.protolayout.material.Text
 import androidx.wear.protolayout.material.Button
 import androidx.wear.protolayout.material.ButtonDefaults
 import androidx.wear.protolayout.ColorBuilders
-import androidx.wear.protolayout.material.layouts.PrimaryLayout
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
@@ -24,11 +23,11 @@ import kotlinx.coroutines.launch
 /**
  * The primary surface.
  *
- * Layout (top to bottom):
- *   "Water" + today's total, e.g. "32 / 64 oz"
- *   Big +8 oz button (your default — changeable in the app)
- *   Row: +12 oz | +16 oz | Undo
- *   Footer: "Synced" or "Pending — phone away" (pending count)
+ * Layout (weather-tile style, Oct 28, Cole):
+ *   Top: "Today"
+ *   Middle Row: left large square (today / goal + wave fill
+ *     rising with progress) | right stacked pills (+default, +16)
+ *   Bottom footer: "Synced" or "Pending — phone away" (pending count)
  *
  * Direct-log interaction (v13, items 5): Tile buttons use
  * LoadAction, not LaunchAction. A tap re-requests this TileService
@@ -97,34 +96,132 @@ class WaterTileService : TileService() {
         val goalOz = mlToOz(goalMl)
         val defaultOz = mlToOz(defaultMl)
 
-        val layout = PrimaryLayout.Builder(
-            requestParams.deviceConfiguration
-        )
-            .setContent(
-                LayoutElementBuilders.Column.Builder()
-                    .addContent(
-                        Text.Builder(this@WaterTileService, "$todayOz / $goalOz oz").setColor(white())
+        // Weather-tile layout (Oct 28, Cole): top "Today", middle Row
+        // with a large left square (today / goal + wave fill rising
+        // with progress) and two stacked pill buttons on the right
+        // (default tap, then +16), bottom footer (Synced / pending /
+        // error). Tiles are ProtoLayout, not Compose, so the wave is
+        // a static wave-edge image + a fill height computed from
+        // progress on each refresh, not an animated Canvas wave.
+        // +12 and Undo leave the Tile in this layout; both stay in
+        // the Wear app. If the default tap is already +16, the
+        // second pill falls back to +12 so the two pills differ.
+        val progress = if (goalMl > 0) (todayMl.toFloat() / goalMl.toFloat()).coerceIn(0f, 1f) else 0f
+        val squareH = 124
+        val waveH = 12
+        val fillTotal = (progress * squareH).toInt()
+        val waveShown = if (fillTotal <= 0) 0 else minOf(waveH, fillTotal)
+        val fillBoxH = fillTotal - waveShown
+        val secondOz = if (defaultOz == 16) 12 else 16
+        val secondId = if (defaultOz == 16) "add_12" else "add_16"
+
+        // ProtoLayout Column has no vertical alignment: it
+        // stacks top-to-bottom, so bottom-align the wave/fill with
+        // a top spacer of the unfilled height.
+        val fillColumn = LayoutElementBuilders.Column.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(104f))
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(squareH.toFloat()))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(spacerH(squareH - fillTotal))
+        if (waveShown > 0) {
+            fillColumn.addContent(
+                LayoutElementBuilders.Image.Builder()
+                    .setResourceId("wave")
+                    .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(104f))
+                    .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(waveShown.toFloat()))
+                    .build()
+            )
+        }
+        if (fillBoxH > 0) {
+            fillColumn.addContent(
+                LayoutElementBuilders.Box.Builder()
+                    .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(104f))
+                    .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(fillBoxH.toFloat()))
+                    .setModifiers(
+                        ModifiersBuilders.Modifiers.Builder()
+                            .setBackground(
+                                ModifiersBuilders.Background.Builder()
+                                    .setColor(ColorBuilders.argb(0xFF2196F3.toInt()))
+                                    .build()
+                            )
                             .build()
-                    )
-                    .addContent(
-                        bigButton("add_default", "+$defaultOz", defaultMl)
-                    )
-                    .addContent(
-                        LayoutElementBuilders.Row.Builder()
-                            .addContent(smallButton("add_12", "+12", ozToMl(12)))
-                            .addContent(spacer(8))
-                            .addContent(smallButton("add_16", "+16", ozToMl(16)))
-                            .addContent(spacer(8))
-                            .addContent(smallButton("undo", "Undo", -1))
-                            .build()
-                    )
-                    .addContent(
-                        Text.Builder(
-                            this@WaterTileService,
-                            tileError ?: if (pending == 0) "Synced" else "$pending pending — phone away"
-                        ).setColor(white()).build()
                     )
                     .build()
+            )
+        }
+
+        val leftSquare = LayoutElementBuilders.Box.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(104f))
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(squareH.toFloat()))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder()
+                            .setColor(ColorBuilders.argb(0xFF0B57D0.toInt()))
+                            .setCorner(
+                                ModifiersBuilders.Corner.Builder()
+                                    .setRadius(androidx.wear.protolayout.DimensionBuilders.dp(20f))
+                                    .build()
+                            )
+                            .build()
+                    )
+                    .build()
+            )
+            .addContent(fillColumn.build())
+            .addContent(
+                LayoutElementBuilders.Column.Builder()
+                    .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(104f))
+                    .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(squareH.toFloat()))
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .addContent(spacerH(37))
+                    .addContent(sizedText("$todayOz", 32, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_BOLD, 34))
+                    .addContent(sizedText("/ $goalOz oz", 14, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 16))
+                    .addContent(spacerH(37))
+                    .build()
+            )
+            .build()
+
+        val rightColumn = LayoutElementBuilders.Column.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(76f))
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(squareH.toFloat()))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(spacerH(2))
+            .addContent(pillButton("add_default", "+$defaultOz"))
+            .addContent(spacerH(8))
+            .addContent(pillButton(secondId, "+$secondOz"))
+            .build()
+
+        val root = LayoutElementBuilders.Column.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.expand())
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.expand())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setPadding(
+                        ModifiersBuilders.Padding.Builder()
+                            .setAll(androidx.wear.protolayout.DimensionBuilders.dp(12f))
+                            .build()
+                    )
+                    .build()
+            )
+            .addContent(sizedText("Today", 14, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 16))
+            .addContent(spacerH(8))
+            .addContent(
+                LayoutElementBuilders.Row.Builder()
+                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                    .addContent(leftSquare)
+                    .addContent(spacer(8))
+                    .addContent(rightColumn)
+                    .build()
+            )
+            .addContent(spacerH(8))
+            .addContent(
+                sizedText(
+                    tileError ?: if (pending == 0) "Synced" else "$pending pending — phone away",
+                    11, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 13
+                )
             )
             .build()
 
@@ -137,7 +234,7 @@ class WaterTileService : TileService() {
                         TimelineBuilders.TimelineEntry.Builder()
                             .setLayout(
                                 LayoutElementBuilders.Layout.Builder()
-                                    .setRoot(layout)
+                                    .setRoot(root)
                                     .build()
                             )
                             .build()
@@ -151,7 +248,18 @@ class WaterTileService : TileService() {
         requestParams: RequestBuilders.ResourcesRequest
     ): ListenableFuture<ResourceBuilders.Resources> =
         Futures.immediateFuture(
-            ResourceBuilders.Resources.Builder().setVersion("1").build()
+            ResourceBuilders.Resources.Builder().setVersion("2")
+                .addIdToImageMapping(
+                    "wave",
+                    ResourceBuilders.ImageResource.Builder()
+                        .setAndroidResourceByResId(
+                            ResourceBuilders.AndroidImageResourceByResId.Builder()
+                                .setResourceId(R.drawable.wave_tile)
+                                .build()
+                        )
+                        .build()
+                )
+                .build()
         )
 
     private fun white() =
@@ -162,37 +270,58 @@ class WaterTileService : TileService() {
             .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(widthDp.toFloat()))
             .build()
 
-    // Material-themed buttons (Oct 28, Cole): previously these were
-    // plain Box+Text, so the Tile looked like plain text with no
-    // buttons at all, and "+12 oz / +16 oz" overflowed to "+12 oz+16...".
-    // ButtonDefaults.PRIMARY/SECONDARY_COLORS follow the watch's
-    // system Material theme, so the buttons match the watch colour.
-    // Short labels fit the circular buttons; the total above already
-    // shows the "oz" unit.
-    private fun bigButton(id: String, label: String, ml: Int) =
-        Button.Builder(
-            this,
-            ModifiersBuilders.Clickable.Builder()
-                .setId(id)
-                .setOnClick(launchAdd(ml))
-                .build()
-        )
-            .setTextContent(label)
-            .setButtonColors(ButtonDefaults.PRIMARY_COLORS)
-            .setSize(ButtonDefaults.LARGE_SIZE)
+    private fun spacerH(heightDp: Int) =
+        LayoutElementBuilders.Spacer.Builder()
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(heightDp.toFloat()))
             .build()
 
-    private fun smallButton(id: String, label: String, ml: Int) =
-        Button.Builder(
-            this,
-            ModifiersBuilders.Clickable.Builder()
-                .setId(id)
-                .setOnClick(launchAdd(ml))
-                .build()
-        )
-            .setTextContent(label)
-            .setButtonColors(ButtonDefaults.SECONDARY_COLORS)
-            .setSize(ButtonDefaults.DEFAULT_SIZE)
+    // Sized ProtoLayout text with a tight line height, so the
+    // number / goal block fits inside its container instead of
+    // pushing apart on line-height leading.
+    private fun sizedText(text: String, sizeSp: Int, argb: Int, weight: Int, lineHeightSp: Int) =
+        LayoutElementBuilders.Text.Builder()
+            .setText(text)
+            .setFontStyle(
+                LayoutElementBuilders.FontStyle.Builder()
+                    .setSize(androidx.wear.protolayout.DimensionBuilders.sp(sizeSp.toFloat()))
+                    .setColor(ColorBuilders.argb(argb))
+                    .setWeight(weight)
+                    .build()
+            )
+            .setLineHeight(androidx.wear.protolayout.DimensionBuilders.sp(lineHeightSp.toFloat()))
+            .setMultilineAlignment(LayoutElementBuilders.TEXT_ALIGN_CENTER)
+            .build()
+
+    // Weather-tile pill button: rounded rectangle, bright blue,
+    // dark text, LoadAction tap (no activity opens). Replaces the
+    // circular Material Buttons from v17 for the Tile only.
+    private fun pillButton(id: String, label: String) =
+        LayoutElementBuilders.Box.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(76f))
+            .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(56f))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setClickable(
+                        ModifiersBuilders.Clickable.Builder()
+                            .setId(id)
+                            .setOnClick(launchAdd(0))
+                            .build()
+                    )
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder()
+                            .setColor(ColorBuilders.argb(0xFF2196F3.toInt()))
+                            .setCorner(
+                                ModifiersBuilders.Corner.Builder()
+                                    .setRadius(androidx.wear.protolayout.DimensionBuilders.dp(28f))
+                                    .build()
+                            )
+                            .build()
+                    )
+                    .build()
+            )
+            .addContent(sizedText(label, 18, 0xFF102A43.toInt(), LayoutElementBuilders.FONT_WEIGHT_BOLD, 20))
             .build()
 
     private fun launchAdd(ml: Int): ActionBuilders.LoadAction {

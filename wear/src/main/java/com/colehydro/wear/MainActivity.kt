@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import java.util.UUID
 import kotlinx.coroutines.launch
@@ -321,7 +322,7 @@ fun WaterScreen(
                 )
                 .focusRequester(focusRequester)
                 .focusable()
-                .padding(horizontal = 24.dp, vertical = 16.dp),
+                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Top
         ) {
@@ -354,16 +355,26 @@ fun WaterScreen(
                         style = stroke
                     )
                 }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                // Ring text spacing (Oct 28, Cole): displayMedium
+                // (52dp line height) + bodyMedium (24dp) = a 76dp
+                // block inside a 96dp ring whose inner diameter is
+                // only ~74dp, so the lines pushed to the ring edges
+                // instead of centering. Tight line heights + a
+                // smaller number give a ~55dp block, centered.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
                         "${mlToOz(todayMl)}",
-                        style = MaterialTheme.typography.displayMedium,
+                        style = MaterialTheme.typography.displaySmall.copy(lineHeight = 40.sp),
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         "/ ${mlToOz(goalMl)} oz",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

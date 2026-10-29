@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -28,7 +29,7 @@ android {
         applicationId = "com.taescience.waterlogged"
         minSdk = 30
         targetSdk = 36
-        versionCode = 17
+        versionCode = 18
         versionName = "0.1.0"
     }
     buildTypes {
