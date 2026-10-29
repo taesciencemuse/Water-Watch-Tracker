@@ -48,6 +48,34 @@ object NotificationHelper {
         )
     }
 
+    /** Create the reminder channel at app startup, regardless of
+     *  permission. Creating a channel does NOT require permission,
+     *  but Settings only shows an app as "sends notifications" (with
+     *  a toggle / categories) once a channel exists. Previously the
+     *  channel was only created when posting a notification, which
+     *  is gated on permission — a chicken-and-egg: no permission
+     *  -> no post -> no channel -> Settings says "This app does
+     *  not send notifications" and hides the toggle you need to
+     *  grant it. Calling this on every open is idempotent. */
+    // Alerting channel (v16): IMPORTANCE_HIGH, so reminders pop up
+    // with sound/vibration instead of landing silently in the shade.
+    // The old "water_reminders" DEFAULT channel cannot have its
+    // importance raised by code once created, so v16 uses a new id
+    // and deletes the old channel.
+    const val CHANNEL_ID = "water_reminders_alerting"
+
+    fun ensureChannel(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.deleteNotificationChannel("water_reminders")
+        val channel = android.app.NotificationChannel(
+            CHANNEL_ID,
+            "Water reminders",
+            NotificationManager.IMPORTANCE_HIGH
+        )
+        channel.description = "Reminders to drink water"
+        manager.createNotificationChannel(channel)
+    }
+
     fun buildReminderNotification(
         context: Context,
         notificationId: Int,
@@ -55,14 +83,10 @@ object NotificationHelper {
         text: String
     ): android.app.Notification {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channel = android.app.NotificationChannel(
-            "water_reminders",
-            "Water reminders",
-            NotificationManager.IMPORTANCE_DEFAULT
-        )
-        channel.description = "Reminders to drink water"
-        manager.createNotificationChannel(channel)
-        return NotificationCompat.Builder(context, "water_reminders")
+        ensureChannel(context)
+        return NotificationCompat.Builder(context, CHANNEL_ID)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
             .setSmallIcon(com.colehydro.phone.R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)

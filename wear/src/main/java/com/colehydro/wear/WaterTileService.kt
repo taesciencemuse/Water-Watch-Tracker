@@ -7,6 +7,7 @@ import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.protolayout.material.Text
+import androidx.wear.protolayout.ColorBuilders
 import androidx.wear.protolayout.material.layouts.PrimaryLayout
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
@@ -85,12 +86,12 @@ class WaterTileService : TileService() {
         val defaultOz = mlToOz(defaultMl)
 
         val layout = PrimaryLayout.Builder(
-            DeviceParametersBuilders.DeviceParameters.Builder().build()
+            requestParams.deviceConfiguration
         )
             .setContent(
                 LayoutElementBuilders.Column.Builder()
                     .addContent(
-                        Text.Builder(this@WaterTileService, "$todayOz / $goalOz oz")
+                        Text.Builder(this@WaterTileService, "$todayOz / $goalOz oz").setColor(white())
                             .build()
                     )
                     .addContent(
@@ -107,7 +108,7 @@ class WaterTileService : TileService() {
                         Text.Builder(
                             this@WaterTileService,
                             if (pending == 0) "Synced" else "$pending pending — phone away"
-                        ).build()
+                        ).setColor(white()).build()
                     )
                     .build()
             )
@@ -139,6 +140,9 @@ class WaterTileService : TileService() {
             ResourceBuilders.Resources.Builder().setVersion("1").build()
         )
 
+    private fun white() =
+        ColorBuilders.ColorProp.Builder().setArgb(0xFFFFFFFF.toInt()).build()
+
     private fun bigButton(id: String, label: String, ml: Int) =
         LayoutElementBuilders.Box.Builder()
             .setModifiers(
@@ -151,7 +155,7 @@ class WaterTileService : TileService() {
                     )
                     .build()
             )
-            .addContent(Text.Builder(this, label).build())
+            .addContent(Text.Builder(this, label).setColor(white()).build())
             .build()
 
     private fun smallButton(id: String, label: String, ml: Int) =
@@ -166,7 +170,7 @@ class WaterTileService : TileService() {
                     )
                     .build()
             )
-            .addContent(Text.Builder(this, label).build())
+            .addContent(Text.Builder(this, label).setColor(white()).build())
             .build()
 
     private fun launchAdd(ml: Int): ActionBuilders.LoadAction {

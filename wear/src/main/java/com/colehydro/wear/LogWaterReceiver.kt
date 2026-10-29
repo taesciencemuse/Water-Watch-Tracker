@@ -55,6 +55,9 @@ class LogWaterReceiver : BroadcastReceiver() {
                     try { Toast.makeText(context, "+${mlToOz(defaultMl)} oz logged", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
                 }
             } catch (_: Exception) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try { Toast.makeText(context, "Couldn't log — try again", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
+                }
             } finally {
                 pending.finish()
             }

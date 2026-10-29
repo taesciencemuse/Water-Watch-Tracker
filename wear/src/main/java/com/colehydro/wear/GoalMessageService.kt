@@ -45,6 +45,11 @@ class GoalMessageService : WearableListenerService() {
                 scope.launch {
                     WaterRepository(this@GoalMessageService).resetToday()
                     requestUpdates()
+                    // Second, delayed update: watch faces can throttle
+                    // or coalesce a rapid update, leaving the old
+                    // complication value after a clear (Oct 28 test 6).
+                    kotlinx.coroutines.delay(1000)
+                    requestUpdates()
                 }
             }
             "/hydro/total" -> {

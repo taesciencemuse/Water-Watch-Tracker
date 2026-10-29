@@ -1207,6 +1207,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Notification channel at startup (see ensureChannel):
+                // must exist before Settings will show this app as
+                // sending notifications, regardless of permission.
+                LaunchedEffect(Unit) { NotificationHelper.ensureChannel(this@MainActivity) }
+
                 LaunchedEffect(screen) { refreshTotal() }
                 // Widget central update: whenever the app's total
                 // changes for any reason (phone add, watch tap while
@@ -1347,7 +1352,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v15)",
+                                    "Water Logged 0.1.0 (v16)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1471,6 +1476,7 @@ class MainActivity : ComponentActivity() {
                                                 HealthConnectWriter.setGoalMl(this@MainActivity, ml)
                                                 goalMl = ml
                                                 goalText = preset.toString()
+                                                sendGoalToWatch(ml)
                                                 status = "Goal saved: $preset oz"
                                             },
                                             modifier = Modifier.weight(1f),
@@ -1648,7 +1654,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v15) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v16) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1701,6 +1707,12 @@ class MainActivity : ComponentActivity() {
                                                 scope.launch {
                                                     val count = HealthConnectWriter.deleteTodayRecords(this@MainActivity)
                                                     sendResetToWatch()
+                                                    // Force total 0 to the watch after reset, even if
+                                                    // refreshTotal would skip it (lastTotalSent == 0):
+                                                    // without this, the complication can keep the
+                                                    // old total after a clear (Oct 28 test 6).
+                                                    sendTotalToWatch(0)
+                                                    lastTotalSentToWatch = 0
                                                     status = if (count >= 0) "Cleared today's log ($count entries)" else "Couldn't clear today's log"
                                                     refreshTotal()
                                                 }

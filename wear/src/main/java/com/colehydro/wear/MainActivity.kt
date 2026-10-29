@@ -11,6 +11,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -114,8 +120,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshSurfaces() {
-        // Tile
-        WaterTileService.requestTileUpdate(this)
+        // Tile — wrapped: a Tile update failure must never crash
+        // the quick-add screen (this was a suspect in the Oct 28
+        // "tap closes the app" crash, since it ran uncaught).
+        try {
+            WaterTileService.requestTileUpdate(this)
+        } catch (_: Exception) { }
         // Complication: ask the system to re-request data.
         try {
             ComplicationDataSourceUpdateRequester.create(
@@ -231,18 +241,37 @@ fun WaterScreen(
         refresh()
     }
 
+    // Refresh on every resume, not just first composition: phone
+    // adds / clears that arrive while this screen is already open
+    // otherwise only show after several opens/closes (Oct 28 test 4).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     fun log(ml: Int) {
         scope.launch {
-            val tap = WaterTap(
-                id = UUID.randomUUID().toString(),
-                ml = ml,
-                timestampMillis = System.currentTimeMillis()
-            )
-            repo.addTap(tap)
-            if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id))
-            justAdded = "+${mlToOz(ml)} oz logged"
-            refresh()
-            onLogged()
+            try {
+                val tap = WaterTap(
+                    id = UUID.randomUUID().toString(),
+                    ml = ml,
+                    timestampMillis = System.currentTimeMillis()
+                )
+                repo.addTap(tap)
+                if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id))
+                justAdded = "+${mlToOz(ml)} oz logged"
+            } catch (_: Exception) {
+                // Never crash the app on a tap: show the failure
+                // instead, so the next report says "couldn't log"
+                // rather than "app just closes".
+                justAdded = "Couldn't log — try again"
+            }
+            try { refresh() } catch (_: Exception) { }
+            try { onLogged() } catch (_: Exception) { }
         }
     }
 
@@ -259,27 +288,28 @@ fun WaterScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
             Text(
                 "Today",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             // Progress ring with the total inside it.
             Box(contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.size(128.dp)) {
-                    val stroke = Stroke(width = 28f, cap = StrokeCap.Round)
+                Canvas(modifier = Modifier.size(96.dp)) {
+                    val stroke = Stroke(width = 22f, cap = StrokeCap.Round)
                     drawArc(
                         color = track,
                         startAngle = -90f,
                         sweepAngle = 360f,
                         useCenter = false,
-                        topLeft = Offset(14f, 14f),
-                        size = Size(size.width - 28f, size.height - 28f),
+                        topLeft = Offset(11f, 11f),
+                        size = Size(size.width - 22f, size.height - 22f),
                         style = stroke
                     )
                     drawArc(
@@ -287,8 +317,8 @@ fun WaterScreen(
                         startAngle = -90f,
                         sweepAngle = 360f * fraction,
                         useCenter = false,
-                        topLeft = Offset(14f, 14f),
-                        size = Size(size.width - 28f, size.height - 28f),
+                        topLeft = Offset(11f, 11f),
+                        size = Size(size.width - 22f, size.height - 22f),
                         style = stroke
                     )
                 }
@@ -306,7 +336,7 @@ fun WaterScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             if (justAdded != null) {
                 Surface(
                     shape = MaterialTheme.shapes.extraLarge,
@@ -333,7 +363,7 @@ fun WaterScreen(
                 onClick = { vibrateClick(context); log(defaultMl) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(64.dp)
+                    .height(56.dp)
             ) {
                 Text(
                     "+${mlToOz(defaultMl)} oz",
@@ -341,19 +371,19 @@ fun WaterScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 ExpressiveButton(
                     onClick = { vibrateClick(context); log(ozToMl(12)) },
-                    modifier = Modifier.weight(1f).height(56.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     tonal = true
                 ) { Text("+12", style = MaterialTheme.typography.titleMedium) }
                 ExpressiveButton(
                     onClick = { vibrateClick(context); log(ozToMl(16)) },
-                    modifier = Modifier.weight(1f).height(56.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     tonal = true
                 ) { Text("+16", style = MaterialTheme.typography.titleMedium) }
                 ExpressiveButton(
@@ -368,7 +398,7 @@ fun WaterScreen(
                             refresh(); onLogged()
                         }
                     },
-                    modifier = Modifier.weight(1f).height(56.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     tonal = true
                 ) { Text("Undo", style = MaterialTheme.typography.titleMedium) }
             }
