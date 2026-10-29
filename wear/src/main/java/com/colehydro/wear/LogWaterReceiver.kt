@@ -38,21 +38,34 @@ class LogWaterReceiver : BroadcastReceiver() {
         val pending = goAsync()
         scope.launch {
             try {
-                val repo = WaterRepository(context)
+                // ReceiverCallNotAllowedException fix (Oct 28, v19):
+                // onReceive's context is a restricted Receiver context
+                // that cannot bind to services. TileService.getUpdater
+                // and the Wearable clients both bind, so passing the
+                // receiver context made the post-log Tile refresh throw
+                // AFTER addTap had already succeeded — hence "total
+                // moves, but Couldn't log: ReceiverCallNotAllowed..."
+                // Use applicationContext for everything downstream.
+                // Refresh failures are also now non-fatal: they must
+                // never masquerade as a log failure.
+                val appContext = context.applicationContext
+                val repo = WaterRepository(appContext)
                 val (_, _, defaultMl) = repo.snapshot()
                 val tap = WaterTap(
                     id = UUID.randomUUID().toString(),
                     ml = defaultMl,
                     timestampMillis = System.currentTimeMillis()
                 )
-                vibrateClick(context)
+                vibrateClick(appContext)
                 repo.addTap(tap)
-                if (SyncSender.sendTap(context, tap)) repo.markSynced(setOf(tap.id))
-                WaterTileService.requestTileUpdate(context)
+                if (SyncSender.sendTap(appContext, tap)) repo.markSynced(setOf(tap.id))
+                try {
+                    WaterTileService.requestTileUpdate(appContext)
+                } catch (_: Exception) { }
                 try {
                     ComplicationDataSourceUpdateRequester.create(
-                        context,
-                        ComponentName(context, HydrationComplicationService::class.java)
+                        appContext,
+                        ComponentName(appContext, HydrationComplicationService::class.java)
                     ).requestUpdateAll()
                 } catch (_: Exception) { }
                 // Toast must run on the main thread; post it via a

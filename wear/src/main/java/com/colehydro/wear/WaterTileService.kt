@@ -227,7 +227,7 @@ class WaterTileService : TileService() {
 
         TileBuilders.Tile.Builder()
             .setState(androidx.wear.protolayout.StateBuilders.State.Builder().build())
-            .setResourcesVersion("1")
+            .setResourcesVersion("2")
             .setTileTimeline(
                 TimelineBuilders.Timeline.Builder()
                     .addTimelineEntry(
@@ -340,7 +340,9 @@ class WaterTileService : TileService() {
         // calls belong here once the exact ProtoLayout version is pinned
         // in Android Studio — see README "Refresh" section.
         fun requestTileUpdate(context: android.content.Context) {
-            TileService.getUpdater(context)
+            // applicationContext: a BroadcastReceiver's restricted
+            // context cannot bind, and getUpdater binds (v19 fix).
+            TileService.getUpdater(context.applicationContext)
                 .requestUpdate(WaterTileService::class.java)
         }
     }
