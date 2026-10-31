@@ -1,6 +1,5 @@
 package com.colehydro.wear
 
-import android.content.ComponentName
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,13 +10,13 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusable
+import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.compose.runtime.DisposableEffect
@@ -61,8 +60,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
+import java.time.LocalDate
 import java.util.UUID
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
                     secondary = Color(0xFF5EEAD4),
                     onSecondary = Color(0xFF06332B),
                     secondaryContainer = Color(0xFF0F4A3E),
-                    background = Color(0xFF08131D),
+                    background = Color.Black, // pure black, like other watch apps (was dark navy #08131D)
                     onBackground = Color(0xFFF2F8FC),
                     surface = Color(0xFF0F2436),
                     onSurface = Color(0xFFF2F8FC),
@@ -134,16 +134,13 @@ class MainActivity : ComponentActivity() {
         try {
             WaterTileService.requestTileUpdate(this)
         } catch (_: Exception) { }
-        // Complication: ask the system to re-request data.
+        // Complications: ask the system to re-request data for
+        // BOTH providers (Oct 30, two-provider change). Watch
+        // faces not currently using a complication simply ignore
+        // the request; never crash the quick-add flow.
         try {
-            ComplicationDataSourceUpdateRequester.create(
-                this,
-                ComponentName(this, HydrationComplicationService::class.java)
-            ).requestUpdateAll()
-        } catch (_: Exception) {
-            // Watch faces that are not currently using this complication
-            // simply ignore the request; never crash the quick-add flow.
-        }
+            HydrationComplicationService.requestAllUpdates(this)
+        } catch (_: Exception) { }
     }
 }
 
@@ -216,7 +213,7 @@ fun WaterScreen(
     onLogged: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
+    val listState = rememberScalingLazyListState()
     val focusRequester = remember { FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focusRequester.requestFocus() }
     var todayMl by remember { mutableStateOf(0) }
@@ -227,9 +224,21 @@ fun WaterScreen(
 
     fun refresh() {
         scope.launch {
+            // Midnight Tile refresh (Oct 30, Cole: Tile showed
+            // yesterday's 51 oz while app/phone/complication
+            // correctly showed 0). displayedSnapshot() rolls the
+            // day over here, but nothing told the Tile — opening
+            // the app only refreshed it after a log. If this
+            // refresh is the one that rolls the day over, request
+            // a Tile (+ complication) refresh too, so the Tile
+            // cannot stay on yesterday's total after the app opens.
+            val beforeDate = try { repo.prefsFlow().first()[WaterPrefs.TODAY_DATE] } catch (_: Exception) { null }
             val (t, g, d) = repo.displayedSnapshot()
             todayMl = t; goalMl = g; defaultMl = d
             pending = repo.pending().size
+            if (beforeDate != null && beforeDate != LocalDate.now().toString()) {
+                try { onLogged() } catch (_: Exception) { }
+            }
         }
     }
 
@@ -306,32 +315,35 @@ fun WaterScreen(
     val primary = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.surfaceVariant
 
-    Box(
+    // Smooth scrolling (Oct 29, Cole: Column + verticalScroll +
+    // rotary felt jittery / less smooth than other Wear apps).
+    // ScalingLazyColumn is the Wear-native list: items scale at the
+    // edges, rotary snaps with fling, and it recycles content instead
+    // of redrawing a whole Column on every scroll tick. Items are
+    // spaced 8dp apart, so the old 6-8dp Spacers are gone.
+    ScalingLazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.Center
+            .background(Color.Black)
+            .rotaryScrollable(
+                RotaryScrollableDefaults.snapBehavior(listState),
+                focusRequester
+            )
+            .focusRequester(focusRequester)
+            .focusable(),
+        state = listState,
+        contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .rotaryScrollable(
-                    RotaryScrollableDefaults.behavior(scrollState),
-                    focusRequester
-                )
-                .focusRequester(focusRequester)
-                .focusable()
-                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top
-        ) {
+        item {
             Text(
                 "Today",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(6.dp))
+        }
+        item {
             // Progress ring with the total inside it.
             Box(contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.size(96.dp)) {
@@ -355,12 +367,6 @@ fun WaterScreen(
                         style = stroke
                     )
                 }
-                // Ring text spacing (Oct 28, Cole): displayMedium
-                // (52dp line height) + bodyMedium (24dp) = a 76dp
-                // block inside a 96dp ring whose inner diameter is
-                // only ~74dp, so the lines pushed to the ring edges
-                // instead of centering. Tight line heights + a
-                // smaller number give a ~55dp block, centered.
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
@@ -379,8 +385,9 @@ fun WaterScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            if (justAdded != null) {
+        }
+        if (justAdded != null) {
+            item {
                 Surface(
                     shape = MaterialTheme.shapes.extraLarge,
                     color = MaterialTheme.colorScheme.primaryContainer
@@ -392,15 +399,17 @@ fun WaterScreen(
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-            } else if (pending > 0) {
+            }
+        } else if (pending > 0) {
+            item {
                 Text(
                     "$pending pending — phone away",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(8.dp))
             }
+        }
+        item {
             // Big expressive main button: press scale + haptic.
             ExpressiveButton(
                 onClick = { vibrateClick(context); log(defaultMl) },
@@ -414,19 +423,22 @@ fun WaterScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
             ExpressiveButton(
                 onClick = { vibrateClick(context); log(ozToMl(12)) },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 tonal = true
             ) { Text("+12 oz", style = MaterialTheme.typography.titleMedium) }
-            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
             ExpressiveButton(
                 onClick = { vibrateClick(context); log(ozToMl(16)) },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 tonal = true
             ) { Text("+16 oz", style = MaterialTheme.typography.titleMedium) }
-            Spacer(modifier = Modifier.height(8.dp))
+        }
+        item {
             ExpressiveButton(
                 onClick = {
                     vibrateClick(context)

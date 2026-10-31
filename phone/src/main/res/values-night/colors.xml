@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="widget_bg">#FF1565C0</color>
+    <!-- Static dark fallback (pre-Android 12). -->
+    <color name="widget_bg">#FF1A1C1E</color>
     <color name="widget_text">#FFFFFFFF</color>
+    <color name="widget_on_surface_variant">#FFB0B0B0</color>
+    <color name="widget_primary">#FF90CAF9</color>
+    <color name="widget_on_primary">#FF000000</color>
+    <color name="widget_primary_container">#FF0E4A6B</color>
+    <color name="widget_on_primary_container">#FFD3E3FD</color>
+    <color name="widget_track">#FF333333</color>
 </resources>

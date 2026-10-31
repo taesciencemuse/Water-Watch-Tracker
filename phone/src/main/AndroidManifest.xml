@@ -71,10 +71,13 @@
                     android:scheme="wear" />
             </intent-filter>
         </service>
-        <!-- Home screen widget (Glance, v12 item 8). -->
+        <!-- Home screen widgets (Glance; four variants, Oct 30, 2026).
+             The legacy WaterWidget receiver is the Ring variant, so
+             an already-placed widget migrates to the ring. -->
         <receiver
             android:name=".WaterWidgetReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:label="Water Logged — Ring">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -82,12 +85,45 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/water_widget_info" />
         </receiver>
+        <receiver
+            android:name=".WaveWidgetReceiver"
+            android:exported="true"
+            android:label="Water Logged — Wave">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/wave_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".RingQuickAddWidgetReceiver"
+            android:exported="true"
+            android:label="Water Logged — Ring + Quick Add">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/ring_quick_add_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".TileQuickAddWidgetReceiver"
+            android:exported="true"
+            android:label="Water Logged — Quick Add">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/tile_quick_add_widget_info" />
+        </receiver>
 
         <!-- Quick Settings Tile (v13, item 3). -->
         <service
             android:name=".WaterQuickTileService"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
+            android:icon="@drawable/ic_qs_tile"
             android:label="Water +8"
             android:permission="android.service.quicksettings.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -95,11 +131,16 @@
             </intent-filter>
         </service>
 
-        <!-- Launcher shortcut target (v13, item 4): transparent, logs and finishes. -->
+        <!-- Launcher shortcut target (v13, item 4): NoDisplay, logs and finishes.
+             Flash fix (Oct 30): no window at all, so tapping the shortcut
+             cannot flash a window band the way the old translucent
+             activity did. -->
         <activity
             android:name=".ShortcutLogActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <!-- Notification +8 action (v12 item 1). Not exported: only
              this app's own PendingIntents can trigger it. -->

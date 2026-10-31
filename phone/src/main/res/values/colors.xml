@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Static fallback (pre-Android 12). On Android 12+ the
+         values-v31 files below override these with the
+         wallpaper-derived system palette, so the widget blends
+         into the home screen. The wave fill is NOT here: it is
+         the one hard-coded colour, #2196F3 in WaterWidget.kt,
+         matching the phone app's wave. -->
     <color name="widget_bg">#FFE3F2FD</color>
     <color name="widget_text">#FF000000</color>
+    <color name="widget_on_surface_variant">#FF444444</color>
+    <color name="widget_primary">#FF0B57D0</color>
+    <color name="widget_on_primary">#FFFFFFFF</color>
+    <color name="widget_primary_container">#FFD3E3FD</color>
+    <color name="widget_on_primary_container">#FF001D35</color>
+    <color name="widget_track">#FFE0E0E0</color>
 </resources>

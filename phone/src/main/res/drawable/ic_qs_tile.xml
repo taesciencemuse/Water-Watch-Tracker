@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dedicated Quick Settings tile icon (Oct 30, 2026): the QS tile
+     was previously using @mipmap/ic_launcher, the full-colour
+     adaptive launcher icon, and did not appear in the Edit tiles
+     list. QS tiles want a simple, tintable vector: a white water
+     drop on transparent, no background layer, so SystemUI can
+     tint it to match the panel. Same drop idea as the launcher
+     foreground, redrawn for 24dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2 C12,2 5,10 5,15 A7,7 0 0,0 19,15 C19,10 12,2 12,2 Z" />
+</vector>

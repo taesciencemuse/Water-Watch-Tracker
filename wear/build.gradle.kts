@@ -1,3 +1,4 @@
+import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -22,6 +23,22 @@ android {
             }
         }
     }
+    // Release signing (Play, Oct 29, Cole-approved): reads
+    // keystore.properties at the project root if present. That file
+    // and release.keystore are gitignored and must NEVER be pushed
+    // to GitHub. Clones without them still build debug fine.
+    if (rootProject.file("keystore.properties").exists()) {
+        val keystoreProps = Properties()
+        rootProject.file("keystore.properties").inputStream().use { keystoreProps.load(it) }
+        signingConfigs {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
     namespace = "com.colehydro.wear"
     compileSdk = 36
 
@@ -29,10 +46,15 @@ android {
         applicationId = "com.taescience.waterlogged"
         minSdk = 30
         targetSdk = 36
-        versionCode = 19
+        versionCode = 20
         versionName = "0.1.0"
     }
     buildTypes {
+        getByName("release") {
+            if (rootProject.file("keystore.properties").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         getByName("debug") {
             if (file("../debug.keystore").exists()) {
                 signingConfig = signingConfigs.getByName("persistentDebug")

@@ -41,6 +41,14 @@ class WaterQuickTileService : TileService() {
             val (total, goal) = todayTotalAndGoal()
             qsTile?.let { tile ->
                 tile.label = "Water ${oz(total)} / ${oz(goal)}"
+                // Dedicated QS icon (Oct 30, 2026): previously the
+                // tile used the adaptive launcher icon in the
+                // manifest and did not appear in Edit tiles.
+                // Set the simple tintable vector here too, so the
+                // panel tile itself never falls back to it.
+                tile.icon = android.graphics.drawable.Icon.createWithResource(
+                    this@WaterQuickTileService, R.drawable.ic_qs_tile
+                )
                 tile.state = Tile.STATE_INACTIVE
                 tile.updateTile()
             }

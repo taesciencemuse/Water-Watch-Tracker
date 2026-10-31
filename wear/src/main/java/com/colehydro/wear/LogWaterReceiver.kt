@@ -1,11 +1,10 @@
 package com.colehydro.wear
 
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.view.Gravity
 import android.widget.Toast
-import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,14 +26,26 @@ class LogWaterReceiver : BroadcastReceiver() {
 
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    // Error Toast only (Oct 30, Cole: success Toasts removed).
+    // The Oct 29 "bottom Toast" attempt did not work in practice
+    // — on this watch the Toasts still landed in the middle, not
+    // at the bottom, despite BOTTOM gravity — and they are not
+    // needed: a successful tap updates the complication
+    // immediately, which is the feedback. A failed tap still
+    // needs a Toast, otherwise it would fail silently.
+    private fun showBottomToast(context: Context, text: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                val toast = Toast.makeText(context, text, Toast.LENGTH_SHORT)
+                val density = context.resources.displayMetrics.density
+                toast.setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL, 0, (24 * density).toInt())
+                toast.show()
+            } catch (_: Exception) { }
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_LOG_DEFAULT) return
-        // Immediate Toast: proves the broadcast fired at all, even
-        // if addTap then fails (Oct 28: complication tap showed
-        // nothing at all in v16, so firing vs failing was unclear).
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            try { Toast.makeText(context, "Logging…", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
-        }
         val pending = goAsync()
         scope.launch {
             try {
@@ -62,21 +73,11 @@ class LogWaterReceiver : BroadcastReceiver() {
                 try {
                     WaterTileService.requestTileUpdate(appContext)
                 } catch (_: Exception) { }
-                try {
-                    ComplicationDataSourceUpdateRequester.create(
-                        appContext,
-                        ComponentName(appContext, HydrationComplicationService::class.java)
-                    ).requestUpdateAll()
-                } catch (_: Exception) { }
-                // Toast must run on the main thread; post it via a
-                // main-thread handler if we are still on IO here.
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    try { Toast.makeText(context, "+${mlToOz(defaultMl)} oz logged", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
-                }
+                HydrationComplicationService.requestAllUpdates(appContext)
+                // No success Toast: the complication update above
+                // is the feedback (Oct 30, Cole).
             } catch (e: Exception) {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    try { Toast.makeText(context, "Couldn't log: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
-                }
+                showBottomToast(context, "Couldn't log: ${e.javaClass.simpleName}")
             } finally {
                 pending.finish()
             }

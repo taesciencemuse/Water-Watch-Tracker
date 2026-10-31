@@ -1,3 +1,4 @@
+import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -22,6 +23,22 @@ android {
             }
         }
     }
+    // Release signing (Play, Oct 29, Cole-approved): reads
+    // keystore.properties at the project root if present. That file
+    // and release.keystore are gitignored and must NEVER be pushed
+    // to GitHub. Clones without them still build debug fine.
+    if (rootProject.file("keystore.properties").exists()) {
+        val keystoreProps = Properties()
+        rootProject.file("keystore.properties").inputStream().use { keystoreProps.load(it) }
+        signingConfigs {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
     namespace = "com.colehydro.phone"
     compileSdk = 36
 
@@ -29,7 +46,7 @@ android {
         applicationId = "com.taescience.waterlogged"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
+        versionCode = 20
         versionName = "0.1.0"
     }
 
@@ -40,6 +57,11 @@ android {
         kotlinCompilerExtensionVersion = "1.7.8"
     }
     buildTypes {
+        getByName("release") {
+            if (rootProject.file("keystore.properties").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         getByName("debug") {
             if (file("../debug.keystore").exists()) {
                 signingConfig = signingConfigs.getByName("persistentDebug")
@@ -60,6 +82,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     testImplementation("junit:junit:4.13.2")
     implementation("androidx.activity:activity-compose:1.9.0")
+    // Release lintVital gate (Oct 29, Play bundles): ActivityResult
+    // APIs require Fragment >= 1.3.0; pinning fragment-ktx explicitly
+    // so a transitive older Fragment cannot trip the release build.
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
     implementation("androidx.compose.ui:ui:1.7.0")
     implementation("androidx.compose.material3:material3:1.3.0")
     implementation("androidx.compose.material:material-icons-extended:1.7.0")

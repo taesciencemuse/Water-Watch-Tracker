@@ -122,6 +122,12 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         try { android.widget.Toast.makeText(context, "+8 oz logged", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) { }
                     }
                     HealthConnectWriter.addToCachedTotalMl(context, 237)
+                    // Live refresh (Oct 30): tell an open MainActivity
+                    // to re-read now, before the watch send below (which
+                    // can stall on an unreachable watch) and before the
+                    // widget update — so the open app's total moves
+                    // promptly instead of waiting for navigation.
+                    TotalRefresh.send(context)
                     // Watch sync was missing entirely: the phone total
                     // only reached the watch when the phone app was
                     // next opened and refreshTotal() ran, so a

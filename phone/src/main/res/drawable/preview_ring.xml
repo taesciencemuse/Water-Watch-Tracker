@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget picker preview ring (Oct 30): static vector, ~38% arc in
+     the primary colour over a track circle. Preview only — the real
+     widget draws its ring from live data in WaterWidget.kt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFE0E0E0"
+        android:strokeWidth="8"
+        android:pathData="M50,10 A40,40 0 1,1 50,90 A40,40 0 1,1 50,10" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF0B57D0"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:pathData="M50,10 A40,40 0 0,1 77,79" />
+</vector>

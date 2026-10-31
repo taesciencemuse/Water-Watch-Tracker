@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Preview wave fill: hard-coded #2196F3, the same one colour that
+     is hard-coded in the real widget (Oct 30 decision). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="12dp" />
+    <solid android:color="#FF2196F3" />
+</shape>

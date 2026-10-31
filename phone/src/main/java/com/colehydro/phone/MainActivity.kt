@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -39,6 +41,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -74,6 +77,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -103,7 +107,7 @@ class MainActivity : ComponentActivity() {
     private var screen by mutableStateOf(Screen.Main)
     private var showClearConfirm by mutableStateOf(false)
     // 0 = no back gesture in progress, 1 = gesture fully committed.
-    // Driven by PredictiveBackHandler while on Settings.
+    // Driven by PredictiveBackHandler while on any non-Main screen.
     private var backProgress by mutableStateOf(0f)
     private var status by mutableStateOf("Not checked yet")
     private var totalMl by mutableStateOf<Int?>(null)
@@ -111,11 +115,50 @@ class MainActivity : ComponentActivity() {
     private var lastTotalSentToWatch: Int? = null
     private var goalMl by mutableStateOf(1893)
     private var goalText by mutableStateOf("64")
+    // Complication mode state removed Oct 30: behaviour is now
+    // chosen by which complication provider the user places in a
+    // slot ("Water Logged - Add water" vs "Water Logged - Open
+    // app"), not by a phone setting.
+    private var quickButtonsOz by mutableStateOf(listOf(12, 16))
+    private var quickButtonDrafts by mutableStateOf(listOf("12", "16"))
     private var lastAction by mutableStateOf("")
     // First-launch permission chain: after the notification prompt
     // answers, launch Health Connect next (one dialog at a time).
     private var firstLaunchPendingHC = false
     private var hcPermissionChanged by mutableStateOf(0)
+
+    // Live refresh (Oct 30): background writers (notification +8,
+    // watch taps, widget, shortcut) broadcast TotalRefresh.ACTION
+    // after a successful write. An open MainActivity refreshes on
+    // resume and on that broadcast, instead of only on screen/tab
+    // change — previously a notification write left the open app at
+    // the old total until the user navigated (proven Oct 30: Toast
+    // at ~7s, total stuck at 0 until navigation at ~20s).
+    private var refreshTotalCallback: (() -> Unit)? = null
+    private val totalRefreshReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            refreshTotalCallback?.invoke()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshTotalCallback?.invoke()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, totalRefreshReceiver,
+            android.content.IntentFilter(TotalRefresh.ACTION),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    override fun onStop() {
+        try { unregisterReceiver(totalRefreshReceiver) } catch (_: Exception) { }
+        super.onStop()
+    }
 
     private val permissionLauncher = registerForActivityResult(
         PermissionController.createRequestPermissionResultContract()
@@ -221,6 +264,15 @@ class MainActivity : ComponentActivity() {
 
     // Round, don't truncate: 64 oz -> 1892.7 ml -> 1892 ml -> 63 oz
     // was the v9 bug. Rounding both directions keeps 64 oz = 64 oz.
+    /** Update the secondary quick-add buttons everywhere at once:
+     *  member state, draft texts in the Settings editor, and prefs. */
+    private fun updateQuickButtons(newList: List<Int>) {
+        val clean = newList.filter { it in 1..100 }.distinct().take(4)
+        HealthConnectWriter.setQuickButtonsOz(this@MainActivity, clean)
+        quickButtonsOz = clean
+        quickButtonDrafts = clean.map { it.toString() }
+    }
+
     /** Phone -> watch clear: sends /hydro/reset to every connected watch.
      *  The watch clears its today total and unsynced queue. If no watch
      *  is connected, the phone clear still happens; the watch will
@@ -439,9 +491,24 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun HistoryContent() {
         var tab by androidx.compose.runtime.remember { androidx.compose.runtime.mutableIntStateOf(0) }
-        var daily by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Pair<java.time.LocalDate, Int>>>(emptyList()) }
-        var monthly by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Pair<java.time.YearMonth, Int>>>(emptyList()) }
-        var entries by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<HealthConnectWriter.HydrationEntry>>(emptyList()) }
+        // Per-tab state (Oct 29, Cole: History flash fix). These used
+        // to be one shared `daily` / `entries` list, overwritten by
+        // LaunchedEffect(tab) the moment a tab was tapped. But
+        // AnimatedContent keeps the OLD tab on screen while it fades
+        // out, so the outgoing chart re-rendered with the NEW tab's
+        // partial data: e.g. tapping Today set daily to a single
+        // (today, total) pair, and the fading-out Week chart collapsed
+        // to one giant wide column (one bar = 60% of chart width,
+        // full-height track, 17% white value at the bottom) for
+        // several frames. Each tab now owns its own list, and a tab
+        // load never touches another tab's data, so the outgoing
+        // chart keeps its own bars until it has fully faded out.
+        // Side benefit: returning to a tab shows its cached data
+        // instantly instead of flashing 0 oz while it reloads.
+        var todayEntries by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<HealthConnectWriter.HydrationEntry>>(emptyList()) }
+        var weekDaily by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Pair<java.time.LocalDate, Int>>>(emptyList()) }
+        var monthDaily by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Pair<java.time.LocalDate, Int>>>(emptyList()) }
+        var yearMonthly by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<List<Pair<java.time.YearMonth, Int>>>(emptyList()) }
         val context = LocalContext.current
         val zone = java.time.ZoneId.systemDefault()
         val today = java.time.LocalDate.now(zone)
@@ -449,21 +516,17 @@ class MainActivity : ComponentActivity() {
             when (tab) {
                 0 -> {
                     val start = today.atStartOfDay(zone).toInstant()
-                    entries = HealthConnectWriter.readHydrationEntries(context, start, java.time.Instant.now())
-                    daily = listOf(today to entries.sumOf { it.ml })
+                    todayEntries = HealthConnectWriter.readHydrationEntries(context, start, java.time.Instant.now())
                 }
                 1 -> {
-                    daily = HealthConnectWriter.dailyTotals(context, today.minusDays(6), today)
-                    entries = emptyList()
+                    weekDaily = HealthConnectWriter.dailyTotals(context, today.minusDays(6), today)
                 }
                 2 -> {
-                    daily = HealthConnectWriter.dailyTotals(context, today.withDayOfMonth(1), today)
-                    entries = emptyList()
+                    monthDaily = HealthConnectWriter.dailyTotals(context, today.withDayOfMonth(1), today)
                 }
                 else -> {
                     val months = (0..11).map { java.time.YearMonth.of(today.year, today.month).minusMonths((11 - it).toLong()) }
-                    monthly = HealthConnectWriter.monthlyTotals(context, months)
-                    daily = emptyList()
+                    yearMonthly = HealthConnectWriter.monthlyTotals(context, months)
                 }
             }
         }
@@ -472,10 +535,10 @@ class MainActivity : ComponentActivity() {
             val totalOz: Int
             val subtitle: String
             when (tab) {
-                0 -> { totalOz = oz(entries.sumOf { it.ml }); subtitle = "Today" }
-                1 -> { totalOz = oz(daily.sumOf { it.second }); subtitle = "This week • avg ${if (daily.isNotEmpty()) oz(daily.sumOf { it.second } / daily.size) else 0} oz/day" }
-                2 -> { totalOz = oz(daily.sumOf { it.second }); subtitle = "This month • avg ${if (daily.isNotEmpty()) oz(daily.sumOf { it.second } / daily.size) else 0} oz/day" }
-                else -> { totalOz = oz(monthly.sumOf { it.second }); subtitle = "This year • avg ${if (monthly.isNotEmpty()) oz(monthly.sumOf { it.second } / monthly.size) else 0} oz/month" }
+                0 -> { totalOz = oz(todayEntries.sumOf { it.ml }); subtitle = "Today" }
+                1 -> { totalOz = oz(weekDaily.sumOf { it.second }); subtitle = "This week • avg ${if (weekDaily.isNotEmpty()) oz(weekDaily.sumOf { it.second } / weekDaily.size) else 0} oz/day" }
+                2 -> { totalOz = oz(monthDaily.sumOf { it.second }); subtitle = "This month • avg ${if (monthDaily.isNotEmpty()) oz(monthDaily.sumOf { it.second } / monthDaily.size) else 0} oz/day" }
+                else -> { totalOz = oz(yearMonthly.sumOf { it.second }); subtitle = "This year • avg ${if (yearMonthly.isNotEmpty()) oz(yearMonthly.sumOf { it.second } / yearMonthly.size) else 0} oz/month" }
             }
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -498,6 +561,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
+            // History swipe (Oct 30, Cole approved): swiping left/right
+            // over the chart area moves between Today/Week/Month/Year.
+            // Implemented as a horizontal-drag detector on the chart
+            // area, not a pager, so the per-tab cached data and the
+            // AnimatedContent fade (Oct 29 flash fix) are untouched:
+            // a swipe just changes `tab`, exactly like tapping a tab.
+            // 100px of horizontal drag flips one tab; vertical drags
+            // still scroll the page, since only horizontal movement
+            // is consumed here.
+            var swipeDrag by androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier.fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = { swipeDrag = 0f },
+                            onHorizontalDrag = { _: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
+                                swipeDrag += dragAmount
+                                if (swipeDrag < -100f) {
+                                    tab = (tab + 1).coerceAtMost(3)
+                                    swipeDrag = 0f
+                                } else if (swipeDrag > 100f) {
+                                    tab = (tab - 1).coerceAtLeast(0)
+                                    swipeDrag = 0f
+                                }
+                            }
+                        )
+                    }
+            ) {
             androidx.compose.animation.AnimatedContent(
                 targetState = tab,
                 transitionSpec = {
@@ -526,7 +617,7 @@ class MainActivity : ComponentActivity() {
                 0 -> {
                     // Hourly bars: 24 hours, label every 3 hours
                     val hourly = IntArray(24)
-                    entries.forEach { e ->
+                    todayEntries.forEach { e ->
                         val h = java.time.Instant.ofEpochMilli(e.timeMillis).atZone(zone).hour
                         hourly[h] += e.ml
                     }
@@ -535,10 +626,10 @@ class MainActivity : ComponentActivity() {
                     Spacer(modifier = Modifier.height(24.dp))
                     Text("Entries", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (entries.isEmpty()) {
+                    if (todayEntries.isEmpty()) {
                         Text("No entries today yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
-                        entries.sortedByDescending { it.timeMillis }.forEach { e ->
+                        todayEntries.sortedByDescending { it.timeMillis }.forEach { e ->
                             val time = java.time.Instant.ofEpochMilli(e.timeMillis).atZone(zone).toLocalTime()
                             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(time.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a")), style = MaterialTheme.typography.bodyMedium)
@@ -548,10 +639,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 1 -> {
-                    val labels = daily.map { it.first.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()) }
-                    BarChart(labels, daily.map { oz(it.second) }, goalOz = oz(goalMl))
+                    val labels = weekDaily.map { it.first.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()) }
+                    BarChart(labels, weekDaily.map { oz(it.second) }, goalOz = oz(goalMl))
                     Spacer(modifier = Modifier.height(16.dp))
-                    daily.reversed().forEach { (d, ml) ->
+                    weekDaily.reversed().forEach { (d, ml) ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(d.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d")), style = MaterialTheme.typography.bodyMedium)
                             Text("${oz(ml)} oz", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -559,10 +650,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 2 -> {
-                    val labels = daily.map { (d, _) -> if (d.dayOfMonth % 5 == 1) d.dayOfMonth.toString() else "" }
-                    BarChart(labels, daily.map { oz(it.second) }, goalOz = oz(goalMl))
+                    val labels = monthDaily.map { (d, _) -> if (d.dayOfMonth % 5 == 1) d.dayOfMonth.toString() else "" }
+                    BarChart(labels, monthDaily.map { oz(it.second) }, goalOz = oz(goalMl))
                     Spacer(modifier = Modifier.height(16.dp))
-                    daily.reversed().forEach { (d, ml) ->
+                    monthDaily.reversed().forEach { (d, ml) ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(d.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d")), style = MaterialTheme.typography.bodyMedium)
                             Text("${oz(ml)} oz", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -570,10 +661,10 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 else -> {
-                    val labels = monthly.map { it.first.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()) }
-                    BarChart(labels, monthly.map { oz(it.second) })
+                    val labels = yearMonthly.map { it.first.month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()) }
+                    BarChart(labels, yearMonthly.map { oz(it.second) })
                     Spacer(modifier = Modifier.height(16.dp))
-                    monthly.reversed().forEach { (m, ml) ->
+                    yearMonthly.reversed().forEach { (m, ml) ->
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(m.format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy")), style = MaterialTheme.typography.bodyMedium)
                             Text("${oz(ml)} oz", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
@@ -583,6 +674,7 @@ class MainActivity : ComponentActivity() {
             }
             }
             }
+            } // end swipe Box wrapping AnimatedContent
             Spacer(modifier = Modifier.height(88.dp))
         }
     }
@@ -789,10 +881,6 @@ class MainActivity : ComponentActivity() {
             HealthConnectWriter.streakDaysOrNull(this@MainActivity, goalMl)
                 ?.let { streak = it }
         }
-        var hasUndo by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-        androidx.compose.runtime.LaunchedEffect(totalMl) {
-            hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
-        }
         // v12 item 10: Snackbar Undo helper. Successful phone adds
         // show a Snackbar with an Undo action instead of a permanent
         // Undo button. Undo only covers phone adds, not watch taps.
@@ -806,9 +894,11 @@ class MainActivity : ComponentActivity() {
                 )
                 if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                     vibrateClick(this@MainActivity)
-                    val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
-                    lastAction = if (undone) "" else "Couldn't undo — try again"
-                    hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
+                    // Burst undo (Oct 29, Cole): one Undo on the last
+                    // toast removes every phone add from the last
+                    // 10 seconds, so three quick taps are undone together.
+                    val undoneCount = HealthConnectWriter.undoRecentPhoneAdds(this@MainActivity)
+                    lastAction = if (undoneCount > 0) "Undid $undoneCount ${if (undoneCount == 1) "drink" else "drinks"}" else "Couldn't undo — try again"
                     refreshTotal()
                 }
             }
@@ -994,39 +1084,43 @@ class MainActivity : ComponentActivity() {
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(1.dp)
-                        ) {
-                            PressButton(
-                                onClick = {
-                                    vibrateClick(this@MainActivity)
-                                    scope.launch {
-                                        val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 355)
-                                        if (err == null) { lastAction = ""; showLoggedSnackbar("+12 oz") } else lastAction = "Couldn't log: $err"
-                                        refreshTotal()
-                                        WaterWidgetHelper.updateAll(this@MainActivity)
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(56.dp),
-                                tonal = true,
-                                topStart = 28.dp, topEnd = 0.dp, bottomEnd = 0.dp, bottomStart = 28.dp
-                            ) { Text("+12", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-                            PressButton(
-                                onClick = {
-                                    vibrateClick(this@MainActivity)
-                                    scope.launch {
-                                        val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, 473)
-                                        if (err == null) { lastAction = ""; showLoggedSnackbar("+16 oz") } else lastAction = "Couldn't log: $err"
-                                        refreshTotal()
-                                        WaterWidgetHelper.updateAll(this@MainActivity)
-                                    }
-                                },
-                                modifier = Modifier.weight(1f).height(56.dp),
-                                tonal = true,
-                                topStart = 0.dp, topEnd = 28.dp, bottomEnd = 28.dp, bottomStart = 0.dp
-                            ) { Text("+16", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                        // Secondary quick-add row (Oct 29, Cole): the buttons
+                        // are customizable in Settings ("Quick-add buttons",
+                        // default +12 / +16 oz). One button = a full pill;
+                        // several = a joined segmented row, first segment
+                        // rounded on the left, last on the right, middles
+                        // square. Empty list = no row at all (the big +8
+                        // and Custom oz above still work). Labels carry
+                        // "oz" for consistency with the +8 oz button.
+                        if (quickButtonsOz.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                quickButtonsOz.forEachIndexed { index, buttonOz ->
+                                    val isFirst = index == 0
+                                    val isLast = index == quickButtonsOz.lastIndex
+                                    val single = quickButtonsOz.size == 1
+                                    PressButton(
+                                        onClick = {
+                                            vibrateClick(this@MainActivity)
+                                            scope.launch {
+                                                val err = HealthConnectWriter.writeManualMlResult(this@MainActivity, (buttonOz * 29.5735).roundToInt())
+                                                if (err == null) { lastAction = ""; showLoggedSnackbar("+$buttonOz oz") } else lastAction = "Couldn't log: $err"
+                                                refreshTotal()
+                                                WaterWidgetHelper.updateAll(this@MainActivity)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).height(56.dp),
+                                        tonal = true,
+                                        topStart = if (single || isFirst) 28.dp else 0.dp,
+                                        topEnd = if (single || isLast) 28.dp else 0.dp,
+                                        bottomEnd = if (single || isLast) 28.dp else 0.dp,
+                                        bottomStart = if (single || isFirst) 28.dp else 0.dp
+                                    ) { Text("+$buttonOz oz", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                                }
+                            }
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -1057,21 +1151,7 @@ class MainActivity : ComponentActivity() {
                                 tonal = true
                             ) { Text("Add", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                         }
-                        // Undo last phone add: moved below the manual
-                        // entry (v17, per Cole Oct 28) — bottom of the
-                        // surrounding buttons, not between +8 and +12/+16.
-                        if (hasUndo) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            TextButton(onClick = {
-                                vibrateClick(this@MainActivity)
-                                scope.launch {
-                                    val undone = HealthConnectWriter.undoLastPhoneAdd(this@MainActivity)
-                                    lastAction = if (undone) "" else "Couldn't undo — try again"
-                                    hasUndo = HealthConnectWriter.hasLastPhoneAdd(this@MainActivity)
-                                    refreshTotal()
-                                }
-                            }) { Text("Undo last phone add") }
-                        }
+                        // "Undo last phone add" TextButton removed Oct 29, per Cole: the Snackbar Undo after a phone add is the only phone undo now.
                         if (lastAction.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
@@ -1154,7 +1234,7 @@ class MainActivity : ComponentActivity() {
                 // a live fade/scale preview (backProgress 0->1) instead of
                 // an instant switch. On commit, go to Main; on cancel,
                 // backProgress returns to 0 and the animated value below
-                // springs the Settings screen back to full size.
+                // springs the screen back to full size.
                 // On Main there is no handler, so the system predictive
                 // back-to-home animation runs instead.
                 if (screen != Screen.Main) {
@@ -1183,6 +1263,8 @@ class MainActivity : ComponentActivity() {
 
                 fun refreshTotal() {
                     goalMl = HealthConnectWriter.getGoalMl(this@MainActivity)
+                    quickButtonsOz = HealthConnectWriter.getQuickButtonsOz(this@MainActivity)
+                    quickButtonDrafts = quickButtonsOz.map { it.toString() }
                     goalText = oz(goalMl).toString()
                     scope.launch {
                         totalMl = try {
@@ -1209,6 +1291,11 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+
+                // Wire the live-refresh callback (see onResume/onStart
+                // above): background writers broadcast, and this is
+                // what answers that broadcast while the app is open.
+                refreshTotalCallback = ::refreshTotal
 
                 // Notification channel at startup (see ensureChannel):
                 // must exist before Settings will show this app as
@@ -1355,7 +1442,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Water Logged 0.1.0 (v19)",
+                                    "Water Logged 0.1.0 (v20)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1546,6 +1633,104 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column(modifier = Modifier.padding(24.dp)) {
                                 Text(
+                                    "Quick-add buttons",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    "The secondary buttons under the big +8 oz button on the main screen (default +12 oz and +16 oz). Edit an amount in place, delete a button with the trash can, or add a new one. The big +8 oz button and the watch Tile buttons are separate and are not changed here.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                if (quickButtonsOz.isEmpty()) {
+                                    Text(
+                                        "No quick-add buttons — the main screen shows only +8 oz and Custom oz.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                } else {
+                                    quickButtonsOz.forEachIndexed { buttonIndex, buttonOz ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                                        ) {
+                                            OutlinedTextField(
+                                                value = quickButtonDrafts.getOrNull(buttonIndex) ?: buttonOz.toString(),
+                                                onValueChange = { raw ->
+                                                    val digits = raw.filter { ch -> ch.isDigit() }.take(3)
+                                                    // Keep the draft so the user can clear a field
+                                                    // and retype; commit only a valid, non-duplicate amount.
+                                                    quickButtonDrafts = quickButtonDrafts.toMutableList().also { drafts ->
+                                                        while (drafts.size <= buttonIndex) drafts.add("")
+                                                        drafts[buttonIndex] = digits
+                                                    }
+                                                    val parsed = digits.toIntOrNull()
+                                                    if (parsed == null) {
+                                                        // Empty field: wait for a number, don't commit.
+                                                    } else if (parsed !in 1..100) {
+                                                        status = "Enter a quick-add amount between 1 and 100 oz"
+                                                        quickButtonDrafts = quickButtonDrafts.toMutableList().also { drafts -> drafts[buttonIndex] = buttonOz.toString() }
+                                                    } else if (parsed != buttonOz && parsed in quickButtonsOz) {
+                                                        status = "That amount is already a quick-add button"
+                                                        quickButtonDrafts = quickButtonDrafts.toMutableList().also { drafts -> drafts[buttonIndex] = buttonOz.toString() }
+                                                    } else if (parsed != buttonOz) {
+                                                        updateQuickButtons(quickButtonsOz.toMutableList().also { list -> list[buttonIndex] = parsed })
+                                                        status = "Quick-add button saved: +$parsed oz"
+                                                    }
+                                                },
+                                                label = { Text("Button ${buttonIndex + 1}") },
+                                                suffix = { Text("oz") },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            IconButton(onClick = {
+                                                updateQuickButtons(quickButtonsOz.filterIndexed { i, _ -> i != buttonIndex })
+                                                status = "Quick-add button removed: +$buttonOz oz"
+                                            }) {
+                                                Icon(
+                                                    androidx.compose.material.icons.Icons.Filled.Delete,
+                                                    contentDescription = "Delete +$buttonOz oz button"
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                    }
+                                }
+                                if (quickButtonsOz.size < 4) {
+                                    PressButton(
+                                        onClick = {
+                                            val candidate = (listOf(8, 20, 24, 32, 4, 6, 10) + (1..100).toList())
+                                                .first { it !in quickButtonsOz }
+                                            updateQuickButtons(quickButtonsOz + candidate)
+                                            status = "Added +$candidate oz button — edit it above if needed"
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        tonal = true
+                                    ) { Text("Add custom button", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+                                } else {
+                                    Text(
+                                        "Maximum 4 quick-add buttons — delete one to add another.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(24.dp)) {
+                                Text(
                                     "Health Connect",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1657,7 +1842,7 @@ class MainActivity : ComponentActivity() {
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "Water Logged 0.1.0 (v19) • Health Connect client 1.1.0",
+                            "Water Logged 0.1.0 (v20) • Health Connect client 1.1.0",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1742,11 +1927,22 @@ class MainActivity : ComponentActivity() {
                         }
                                     }
                     } else if (targetScreen == Screen.History) {
-                        HistoryContent()
+                        // Predictive back (Oct 31): same fade/scale
+                        // preview Settings already had — previously
+                        // History/Watch/Reminders registered the
+                        // handler but never used its progress, so
+                        // the gesture snapped to Main with no preview.
+                        Column(modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - animatedBackProgress; scaleX = 1f - 0.08f * animatedBackProgress; scaleY = 1f - 0.08f * animatedBackProgress }) {
+                            HistoryContent()
+                        }
                     } else if (targetScreen == Screen.Watch) {
-                        WatchContent()
+                        Column(modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - animatedBackProgress; scaleX = 1f - 0.08f * animatedBackProgress; scaleY = 1f - 0.08f * animatedBackProgress }) {
+                            WatchContent()
+                        }
                     } else if (targetScreen == Screen.Reminders) {
-                        RemindersContent()
+                        Column(modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - animatedBackProgress; scaleX = 1f - 0.08f * animatedBackProgress; scaleY = 1f - 0.08f * animatedBackProgress }) {
+                            RemindersContent()
+                        }
                     }
                                 }
                         }

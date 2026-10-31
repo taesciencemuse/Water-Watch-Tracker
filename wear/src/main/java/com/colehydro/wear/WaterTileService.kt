@@ -19,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * The primary surface.
@@ -74,12 +76,7 @@ class WaterTileService : TileService() {
                 tileError = "Couldn't log: ${e.javaClass.simpleName}"
             }
             if (tileError == null && SyncSender.sendTap(this@WaterTileService, tap)) repo.markSynced(setOf(tap.id))
-            try {
-                androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester.create(
-                    this@WaterTileService,
-                    android.content.ComponentName(this@WaterTileService, HydrationComplicationService::class.java)
-                ).requestUpdateAll()
-            } catch (_: Exception) { }
+            HydrationComplicationService.requestAllUpdates(this@WaterTileService)
         } else if (clicked == "undo") {
             vibrateClick(this@WaterTileService)
             try {
@@ -92,6 +89,21 @@ class WaterTileService : TileService() {
         scope.launch { SyncSender.flushPending(this@WaterTileService, repo) }
         val (todayMl, goalMl, defaultMl) = repo.displayedSnapshot()
         val pending = repo.pending().size
+        // Footer honesty (Oct 30, Cole: Tile said "Synced" before
+        // the phone app had updated). Previously pending == 0
+        // meant "sent to the phone", not "phone confirmed it".
+        // Now: pending taps -> "N pending — phone away"; no
+        // pending taps but the phone's HC total hasn't caught up
+        // to the watch total yet -> "Syncing"; otherwise "Synced".
+        // The /hydro/total ack from the phone re-requests the
+        // Tile (GoalMessageService), so "Syncing" flips to
+        // "Synced" when that ack arrives. A 0 total with nothing
+        // logged is "Synced", not "Syncing".
+        val watchMl = repo.watchTodayMl()
+        val hcMl = repo.hcTodayMl()
+        val tileFooter = tileError ?: if (pending > 0) "$pending pending — phone away"
+            else if (watchMl > 0 && hcMl < watchMl) "Syncing"
+            else "Synced"
         val todayOz = mlToOz(todayMl)
         val goalOz = mlToOz(goalMl)
         val defaultOz = mlToOz(defaultMl)
@@ -129,6 +141,7 @@ class WaterTileService : TileService() {
                     .setResourceId("wave")
                     .setWidth(androidx.wear.protolayout.DimensionBuilders.dp(104f))
                     .setHeight(androidx.wear.protolayout.DimensionBuilders.dp(waveShown.toFloat()))
+                    .setContentScaleMode(LayoutElementBuilders.CONTENT_SCALE_MODE_FILL_BOUNDS)
                     .build()
             )
         }
@@ -157,6 +170,21 @@ class WaterTileService : TileService() {
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
             .setModifiers(
                 ModifiersBuilders.Modifiers.Builder()
+                    .setClickable(
+                        ModifiersBuilders.Clickable.Builder()
+                            .setId("open_app")
+                            .setOnClick(
+                                ActionBuilders.LaunchAction.Builder()
+                                    .setAndroidActivity(
+                                        ActionBuilders.AndroidActivity.Builder()
+                                            .setPackageName("com.taescience.waterlogged")
+                                            .setClassName("com.colehydro.wear.MainActivity")
+                                            .build()
+                                    )
+                                    .build()
+                            )
+                            .build()
+                    )
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
                             .setColor(ColorBuilders.argb(0xFF0B57D0.toInt()))
@@ -193,10 +221,15 @@ class WaterTileService : TileService() {
             .addContent(pillButton(secondId, "+$secondOz"))
             .build()
 
-        val root = LayoutElementBuilders.Column.Builder()
+        // Vertically centred (Oct 29, Cole): previously this was
+        // a top-aligned Column, so the Tile sat high on screen and
+        // "Today" collided with the Tile app-icon header. A Box with
+        // CENTER alignment centres the inner Column in the Tile area.
+        val root = LayoutElementBuilders.Box.Builder()
             .setWidth(androidx.wear.protolayout.DimensionBuilders.expand())
             .setHeight(androidx.wear.protolayout.DimensionBuilders.expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
             .setModifiers(
                 ModifiersBuilders.Modifiers.Builder()
                     .setPadding(
@@ -206,25 +239,40 @@ class WaterTileService : TileService() {
                     )
                     .build()
             )
-            .addContent(sizedText("Today", 14, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 16))
-            .addContent(spacerH(8))
             .addContent(
-                LayoutElementBuilders.Row.Builder()
-                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                    .addContent(leftSquare)
-                    .addContent(spacer(8))
-                    .addContent(rightColumn)
+                LayoutElementBuilders.Column.Builder()
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .addContent(sizedText("Today", 14, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 16))
+                    .addContent(spacerH(8))
+                    .addContent(
+                        LayoutElementBuilders.Row.Builder()
+                            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                            .addContent(leftSquare)
+                            .addContent(spacer(8))
+                            .addContent(rightColumn)
+                            .build()
+                    )
+                    .addContent(spacerH(8))
+                    .addContent(
+                        sizedText(
+                            tileFooter,
+                            11, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 13
+                        )
+                    )
                     .build()
-            )
-            .addContent(spacerH(8))
-            .addContent(
-                sizedText(
-                    tileError ?: if (pending == 0) "Synced" else "$pending pending — phone away",
-                    11, 0xFFFFFFFF.toInt(), LayoutElementBuilders.FONT_WEIGHT_NORMAL, 13
-                )
             )
             .build()
 
+        // Midnight expiry (Oct 30, Cole: Tile showed yesterday's
+        // 51 oz on Oct 30 morning while app/complication/phone
+        // correctly showed 0). A Tile timeline with no validity
+        // is cached indefinitely until a tap or requestUpdate, so
+        // nothing re-rendered it at midnight. Expiring it at
+        // local midnight forces the system to re-request it on
+        // the new day, when displayedSnapshot() rolls the total
+        // over to 0.
+        val endOfDayMillis = LocalDate.now().plusDays(1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         TileBuilders.Tile.Builder()
             .setState(androidx.wear.protolayout.StateBuilders.State.Builder().build())
             .setResourcesVersion("2")
@@ -232,6 +280,12 @@ class WaterTileService : TileService() {
                 TimelineBuilders.Timeline.Builder()
                     .addTimelineEntry(
                         TimelineBuilders.TimelineEntry.Builder()
+                            .setValidity(
+                                TimelineBuilders.TimeInterval.Builder()
+                                    .setStartMillis(System.currentTimeMillis())
+                                    .setEndMillis(endOfDayMillis)
+                                    .build()
+                            )
                             .setLayout(
                                 LayoutElementBuilders.Layout.Builder()
                                     .setRoot(root)

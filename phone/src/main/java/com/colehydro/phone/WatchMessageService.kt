@@ -54,6 +54,9 @@ class WatchMessageService : WearableListenerService() {
                     if (total != null) sendTotalToWatch(applicationContext, total)
                 }
                 WaterWidgetHelper.updateAll(applicationContext)
+                // Live refresh (Oct 30): an open phone app re-reads
+                // its total now, instead of waiting for navigation.
+                TotalRefresh.send(applicationContext)
             } catch (e: Exception) {
                 android.util.Log.e("WatchMessage", "watch tap failed", e)
                 // Leave it: the watch queue will retry on next Tile open.

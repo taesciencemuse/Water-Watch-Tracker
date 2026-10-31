@@ -66,12 +66,31 @@
             </intent-filter>
         </receiver>
 
-        <!-- COMPLICATION: glance on the watch face. -->
+        <!-- COMPLICATIONS (Oct 30, Cole: two picker entries, no
+             Settings toggle): Add water logs on tap; Open app
+             opens the watch app on tap. Labels must stay
+             unmistakable — the picker shows the label, not the
+             tap behaviour. -->
         <service
             android:name=".HydrationComplicationService"
             android:exported="true"
             android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER"
-            android:label="Water Logged">
+            android:label="Water Logged - Add water">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="RANGED_VALUE,GOAL_PROGRESS,SHORT_TEXT" />
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="0" />
+        </service>
+        <service
+            android:name=".HydrationOpenComplicationService"
+            android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER"
+            android:label="Water Logged - Open app">
             <intent-filter>
                 <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
             </intent-filter>

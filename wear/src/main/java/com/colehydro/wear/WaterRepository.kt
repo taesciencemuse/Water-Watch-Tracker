@@ -44,6 +44,11 @@ object WaterPrefs {
     val LAST_SYNCED_ML = intPreferencesKey("last_synced_ml")
     val HC_TOTAL_ML = intPreferencesKey("hc_total_ml")
     val HC_TOTAL_DATE = stringPreferencesKey("hc_total_date")
+    // COMPLICATION_MODE removed Oct 30: behaviour is now chosen
+    // by which complication provider the user places in a slot
+    // ("Water Logged - Add water" vs "Water Logged - Open app"),
+    // not by a synced setting. The old key, if present in an
+    // existing DataStore, is simply ignored.
 }
 
 class WaterRepository(context: Context) {
@@ -178,6 +183,26 @@ class WaterRepository(context: Context) {
         // snapshot() already rolled the day over; displayedTodayMl
         // re-reads the same day, so displayed >= watchTotal here.
         return Triple(displayed, goalMl, defaultMl)
+    }
+
+    /** Watch-side today total (taps logged on the watch), after
+     *  rollover. Used by the Tile footer to tell "Syncing" from
+     *  "Synced": a tap is only truly synced once the phone's
+     *  /hydro/total ack has caught up to it (Oct 30, Cole). */
+    suspend fun watchTodayMl(): Int {
+        snapshot()
+        return context.dataStore.data.first()[WaterPrefs.TODAY_ML] ?: 0
+    }
+
+    /** Health Connect total for today, as last reported by the
+     *  phone via /hydro/total. 0 when no total for today has
+     *  been reported yet (including yesterday's total, which
+     *  must not count for today). */
+    suspend fun hcTodayMl(): Int {
+        val prefs = context.dataStore.data.first()
+        return if (prefs[WaterPrefs.HC_TOTAL_DATE] == today()) {
+            prefs[WaterPrefs.HC_TOTAL_ML] ?: 0
+        } else 0
     }
 
     suspend fun setDefaultMl(ml: Int) {

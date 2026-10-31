@@ -1,8 +1,6 @@
 package com.colehydro.wear
 
-import android.content.ComponentName
 import androidx.wear.tiles.TileService
-import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import kotlinx.coroutines.CoroutineScope
@@ -77,12 +75,7 @@ class GoalMessageService : WearableListenerService() {
                 .requestUpdate(WaterTileService::class.java)
         } catch (_: Exception) {
         }
-        try {
-            ComplicationDataSourceUpdateRequester.create(
-                this@GoalMessageService,
-                ComponentName(this@GoalMessageService, HydrationComplicationService::class.java)
-            ).requestUpdateAll()
-        } catch (_: Exception) {
-        }
+        // Both complication providers (Oct 30, two-provider change).
+        HydrationComplicationService.requestAllUpdates(this@GoalMessageService)
     }
 }

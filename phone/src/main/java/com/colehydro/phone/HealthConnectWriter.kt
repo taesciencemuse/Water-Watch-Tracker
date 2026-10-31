@@ -42,9 +42,10 @@ object HealthConnectWriter {
             HealthConnectClient.SDK_AVAILABLE
 
     /**
-     * Manual add from the phone main screen: writes one HydrationRecord
-     * straight to Health Connect (no watch queue involved) and remembers
-     * its record id so the next Undo can delete exactly that record.
+     * Manual add from the phone: writes one HydrationRecord straight
+     * to Health Connect (no watch queue involved) and remembers its
+     * record id + time, so Snackbar Undo can delete every phone add
+     * from the last 10 seconds, not just the last one.
      * Returns false if the write failed (e.g. permission not granted).
      */
     /** Returns null on success, or the exact exception message on failure. */
@@ -69,8 +70,7 @@ object HealthConnectWriter {
             )
             val id = response.recordIdsList.firstOrNull()
             if (id != null) {
-                context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
-                    .edit().putString("last_phone_record_id", id).apply()
+                recordPhoneAdd(context, id)
             }
             null
         } catch (e: Exception) {
@@ -84,18 +84,88 @@ object HealthConnectWriter {
         return writeManualMlResult(context, ml) == null
     }
 
-    /** Deletes the most recent phone manual add, if there is one. */
+    // Phone-add history for Snackbar Undo (Oct 29, Cole): one
+    // entry per phone add, "timestampMillis:recordId", newest last.
+    // Kept in hydro_seen alongside the watch seen-ids. Old builds
+    // stored a single "last_phone_record_id"; that id is migrated
+    // into this list (timestamped "now") on first use, so an undo
+    // right after upgrading still works.
+    private fun readPhoneAdds(context: Context): MutableList<Pair<Long, String>> {
+        val prefs = context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
+        val list = prefs.getString("phone_add_ids", "")!!
+            .split(";").mapNotNull { entry ->
+                val parts = entry.split(":", limit = 2)
+                val ts = parts.getOrNull(0)?.toLongOrNull()
+                val id = parts.getOrNull(1)
+                if (ts != null && !id.isNullOrBlank()) ts to id else null
+            }.toMutableList()
+        val legacy = prefs.getString("last_phone_record_id", null)
+        if (legacy != null) {
+            list.add(System.currentTimeMillis() to legacy)
+            prefs.edit().remove("last_phone_record_id")
+                .putString("phone_add_ids", list.joinToString(";") { "${it.first}:${it.second}" }).apply()
+        }
+        return list
+    }
+
+    private fun recordPhoneAdd(context: Context, recordId: String) {
+        val prefs = context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
+        val cutoff = System.currentTimeMillis() - 60_000L
+        val list = readPhoneAdds(context)
+            .filter { it.first >= cutoff }.toMutableList()
+        list.add(System.currentTimeMillis() to recordId)
+        prefs.edit().putString("phone_add_ids", list.takeLast(20).joinToString(";") { "${it.first}:${it.second}" }).apply()
+    }
+
+    /** Deletes every phone manual add made in the last 10 seconds
+     *  before this call, and returns how many were deleted. This is
+     *  the Snackbar Undo path: tap +8, +12, +16 three times in a
+     *  burst and one Undo on the last toast removes all three, as
+     *  long as they all fall inside the 10-second window. Adds older
+     *  than 10 seconds stay put. Watch taps are never in this list,
+     *  so they are never undone from the phone (same as before). */
+    suspend fun undoRecentPhoneAdds(context: Context, windowMillis: Long = 10_000L): Int {
+        return try {
+            val prefs = context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
+            val now = System.currentTimeMillis()
+            val list = readPhoneAdds(context)
+            val recent = list.filter { it.first >= now - windowMillis }
+            if (recent.isEmpty()) return 0
+            val client = HealthConnectClient.getOrCreate(context)
+            var deleted = 0
+            val remaining = list.toMutableList()
+            for ((_, id) in recent) {
+                try {
+                    client.deleteRecords(
+                        HydrationRecord::class,
+                        recordIdsList = listOf(id),
+                        clientRecordIdsList = emptyList()
+                    )
+                    deleted++
+                    remaining.removeAll { it.second == id }
+                } catch (_: Exception) { }
+            }
+            prefs.edit().putString("phone_add_ids", remaining.joinToString(";") { "${it.first}:${it.second}" }).apply()
+            deleted
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    /** Single-add undo, kept for any caller that only ever wants
+     *  the most recent phone add: deletes just the newest entry. */
     suspend fun undoLastPhoneAdd(context: Context): Boolean {
         return try {
             val prefs = context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
-            val id = prefs.getString("last_phone_record_id", null) ?: return false
+            val list = readPhoneAdds(context)
+            val (_, id) = list.lastOrNull() ?: return false
             val client = HealthConnectClient.getOrCreate(context)
             client.deleteRecords(
                 HydrationRecord::class,
                 recordIdsList = listOf(id),
                 clientRecordIdsList = emptyList()
             )
-            prefs.edit().remove("last_phone_record_id").apply()
+            prefs.edit().putString("phone_add_ids", list.dropLast(1).joinToString(";") { "${it.first}:${it.second}" }).apply()
             true
         } catch (_: Exception) {
             false
@@ -159,7 +229,7 @@ object HealthConnectWriter {
             val edit = prefs.edit()
             var changed = false
             for ((key, value) in prefs.all) {
-                if (key == "last_phone_record_id") continue
+                if (key == "last_phone_record_id" || key == "phone_add_ids") continue
                 when (value) {
                     is Long -> if (value < cutoff) { edit.remove(key); changed = true }
                     is Boolean -> { edit.putLong(key, System.currentTimeMillis()); changed = true }
@@ -170,8 +240,7 @@ object HealthConnectWriter {
     }
 
     fun hasLastPhoneAdd(context: Context): Boolean {
-        return context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
-            .getString("last_phone_record_id", null) != null
+        return readPhoneAdds(context).isNotEmpty()
     }
 
     /** Delete a Health Connect record by clientRecordId (watch tap
@@ -207,6 +276,32 @@ object HealthConnectWriter {
     fun getClearTimeMillis(context: Context): Long {
         return context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
             .getLong("clear_time_millis", 0L)
+    }
+
+    // Complication-mode helpers removed Oct 30: behaviour is now
+    // chosen by which complication provider the user places in a
+    // slot, not by a phone setting. The old hydro_prefs key, if
+    // present, is simply ignored.
+
+    /** Secondary quick-add buttons on the phone main screen, in oz.
+     *  Stored as a comma-separated string in hydro_prefs, e.g. "12,16".
+     *  Missing key = default [12, 16]; a present-but-empty value = the
+     *  user deleted them all (the row hides, the Settings card can
+     *  add them back). Amounts are sanitized to 1..100 oz, deduplicated,
+     *  in list order, capped at 4. The big +8 button is separate and
+     *  is not part of this list. */
+    fun getQuickButtonsOz(context: Context): List<Int> {
+        val prefs = context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
+        if (!prefs.contains("quick_buttons_oz")) return listOf(12, 16)
+        return prefs.getString("quick_buttons_oz", "")!!
+            .split(",").mapNotNull { it.toIntOrNull() }
+            .filter { it in 1..100 }.distinct().take(4)
+    }
+
+    fun setQuickButtonsOz(context: Context, ozList: List<Int>) {
+        val clean = ozList.filter { it in 1..100 }.distinct().take(4)
+        context.getSharedPreferences("hydro_prefs", Context.MODE_PRIVATE)
+            .edit().putString("quick_buttons_oz", clean.joinToString(",")).apply()
     }
 
     fun setGoalMl(context: Context, ml: Int) {
@@ -477,7 +572,7 @@ object HealthConnectWriter {
                 )
             }
             context.getSharedPreferences("hydro_seen", Context.MODE_PRIVATE)
-                .edit().remove("last_phone_record_id").apply()
+                .edit().remove("last_phone_record_id").remove("phone_add_ids").apply()
             ids.size
         } catch (_: Exception) {
             -1
